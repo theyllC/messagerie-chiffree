@@ -41,7 +41,7 @@ jobs:
       - name: Contrôle de la configuration des mises à jour
         shell: bash
         run: |
-          if grep -Eq 'TON_COMPTE|COLLE_ICI' backend/mise_a_jour.py; then
+          if grep -Eq '^(DEPOT|CLE_PUBLIQUE_B64) = "[^"]*(TON_COMPTE|COLLE_ICI)' backend/mise_a_jour.py; then
             echo "Renseigne DEPOT et CLE_PUBLIQUE_B64 dans backend/mise_a_jour.py avant de publier."; exit 1
           fi
 

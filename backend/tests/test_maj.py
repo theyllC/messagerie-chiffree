@@ -74,6 +74,8 @@ url_exe = nouvel_exe.as_uri()
 
 try:
     # ====================== 1. NON CONFIGURÉ (version de développement) ======================
+    # Le test ne dépend pas de la vraie configuration du dépôt : on repart des valeurs d'origine.
+    mj.DEPOT, mj.CLE_PUBLIQUE_B64 = "TON_COMPTE/TON_DEPOT", "COLLE_ICI_LA_CLE_PUBLIQUE"
     v = C.get("/api/maj").json()
     check("non configuré : configure = False, aucun état", v["configure"] is False and v["etat"] == "inactif", str(v))
     check("non configuré : vérification sans effet ni erreur", C.post("/api/maj/verifier").json()["etat"] == "inactif")
