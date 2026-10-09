@@ -10,6 +10,9 @@ on:
 permissions:
   contents: write
 
+env:
+  PYTHONUTF8: "1"   # la console Windows est en cp1252 : sans ça, un accent ou une flèche dans un print fait planter les scripts
+
 jobs:
   release:
     runs-on: windows-latest

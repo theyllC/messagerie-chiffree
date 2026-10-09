@@ -91,7 +91,7 @@ try:
         prive.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())).decode()
     signer_release.signer(exe_signe, "2.0.0", "test/depot", sortie, "Notes")
     m_signe = json.loads(sortie.read_text(encoding="utf-8"))
-    check("script de signature ↔ module : signature valide", mj._signature_valide(m_signe))
+    check("script de signature / module : signature valide", mj._signature_valide(m_signe))
     check("script de signature : adresse dans le dépôt", m_signe["url"].startswith(mj.prefixe_autorise()), m_signe["url"])
     check("signature invalide si le SHA-256 est modifié", not mj._signature_valide(dict(m_signe, sha256="0" * 64)))
     check("signature invalide si l'adresse est modifiée", not mj._signature_valide(dict(m_signe, url="https://evil.example/x.exe")))
