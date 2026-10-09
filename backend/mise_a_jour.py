@@ -23,8 +23,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 # --- À configurer une seule fois ---------------------------------------------------------------
 VERSION = "1.0.0"                                  # réécrit automatiquement par la CI depuis le tag
-DEPOT = "TON_COMPTE/TON_DEPOT"                     # ex. "desyy/messagerie-chiffree"
-CLE_PUBLIQUE_B64 = "COLLE_ICI_LA_CLE_PUBLIQUE"     # affichée par : python tools/signer_release.py --generer
+DEPOT = "theyllC/messagerie-chiffree"                     # ex. "desyy/messagerie-chiffree"
+CLE_PUBLIQUE_B64 = "9HG3kslJjfU8nIkWsIZ3YQZkqNkzPkeSPIdl3A358Mw="     # affichée par : python tools/signer_release.py --generer
 # -----------------------------------------------------------------------------------------------
 
 TIMEOUT = 10                       # secondes, par opération réseau
