@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Salle de classe — relais</title>
+<style>
+  :root { --fond: #EEF1F4; --carte: #fff; --encre: #16202E; --doux: #5B6778; --ligne: #D3DAE2; --accent: #0B7285; --ok: #2A7249; --err: #B3341F; }
+  @media (prefers-color-scheme: dark) { :root { --fond: #0F1620; --carte: #17212E; --encre: #E6EBF1; --doux: #9AA6B5; --ligne: #2E3A4A; --accent: #5BBBCE; --ok: #6FCB93; --err: #FF8F7A; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px 16px; font: 16px/1.5 system-ui, sans-serif; background: var(--fond); color: var(--encre); }
+  main { max-width: 960px; margin: 0 auto; display: grid; gap: 24px; }
+  h1 { margin: 0; font-size: 1.5rem; }
+  h2 { margin: 0 0 4px; font-size: 1.1rem; }
+  .salle { background: var(--carte); border: 1px solid var(--ligne); border-radius: 8px; padding: 20px; display: grid; grid-template-columns: auto 1fr; gap: 24px; align-items: start; }
+  @media (max-width: 640px) { .salle { grid-template-columns: 1fr; } }
+  .qr { background: #fff; padding: 12px; border-radius: 8px; line-height: 0; }
+  .qr svg { width: 220px; height: 220px; }
+  .code { font: 700 3.2rem/1 ui-monospace, monospace; letter-spacing: .15em; color: var(--accent); margin: 8px 0; }
+  .doux { color: var(--doux); font-size: .9rem; margin: 0; word-break: break-all; }
+  ul { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 4px; }
+  li { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--ligne); }
+  .point { width: 10px; height: 10px; border-radius: 50%; background: var(--doux); flex: none; }
+  .point.on { background: var(--ok); }
+  .av { width: 28px; text-align: center; font-size: 1.2rem; }
+  .nom { flex: 1; }
+  button { font: inherit; font-size: .85rem; color: var(--accent); background: none; border: 1px solid var(--ligne); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.danger { color: var(--err); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Salle de classe</h1>
+    <p class="doux">Les élèves ouvrent l'onglet « Salle de classe » de leur application, puis saisissent le code (ou collent le lien) avec l'adresse de ce relais. Les messages restent chiffrés de bout en bout : ce relais ne peut rien lire.</p>
+  </header>
+  <div id="salles" aria-live="polite"></div>
+</main>
+<script src="/relais/qrcode.js"></script>
+<script>
+  const conteneur = document.getElementById("salles");
+  function el(tag, props, ...enfants) {
+    const n = document.createElement(tag);
+    Object.assign(n, props || {});
+    for (const e of enfants) n.append(e);
+    return n;
+  }
+  async function appel(url, methode) {
+    const r = await fetch(url, { method: methode || "GET" });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "Erreur");
+    return r.json();
+  }
+  function carte(s) {
+    const qr = qrcode(0, "M");
+    qr.addData(s.lien);
+    qr.make();
+    const zoneQr = el("div", { className: "qr", title: s.lien });
+    zoneQr.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+    const liste = el("ul");
+    for (const m of s.membres) {
+      liste.append(el("li", {},
+        el("span", { className: "point " + (m.en_ligne ? "on" : ""), title: m.en_ligne ? "en ligne" : "hors ligne" }),
+        el("span", { className: "av" }, m.avatar || "·"),
+        el("span", { className: "nom" }, m.pseudo || "(sans pseudo)"),
+        el("span", { className: "doux" }, m.en_attente ? m.en_attente + " message(s) en attente" : ""),
+        Object.assign(el("button", { className: "danger", type: "button" }, "Retirer"), {
+          onclick: async () => { if (confirm("Retirer " + (m.pseudo || "ce membre") + " de la salle ?")) { await appel(`/relais/tableau/retirer?code=${s.code}&id=${m.id}`, "POST"); charger(); } },
+        })));
+    }
+    const nouveau = Object.assign(el("button", { type: "button" }, "Nouveau code"), {
+      onclick: async () => { if (confirm("Générer un nouveau code ? Les élèves déjà dans la salle y restent.")) { await appel("/relais/tableau/nouveau-code?code=" + s.code, "POST"); charger(); } },
+    });
+    return el("section", { className: "salle" }, zoneQr,
+      el("div", {},
+        el("h2", {}, s.nom),
+        el("div", { className: "code", "aria-label": "Code de la salle : " + s.code.split("").join(" ") }, s.code),
+        el("p", { className: "doux" }, "Lien : " + s.lien),
+        el("div", { className: "actions" }, nouveau),
+        el("h2", { style: "margin-top:16px" }, `Élèves (${s.membres.length})`),
+        s.membres.length ? liste : el("p", { className: "doux" }, "Personne n'a encore rejoint la salle.")));
+  }
+  let derniere = "";
+  async function charger() {
+    try {
+      const d = await appel("/relais/tableau.json");
+      const signature = JSON.stringify(d);
+      if (signature === derniere) return;
+      derniere = signature;
+      conteneur.replaceChildren(...d.salles.map(carte));
+    } catch (e) {
+      conteneur.replaceChildren(el("p", { className: "doux" }, "Relais injoignable : " + e.message));
+    }
+  }
+  charger();
+  setInterval(charger, 3000);
+</script>
+</body>
+</html>

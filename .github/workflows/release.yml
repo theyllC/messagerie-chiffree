@@ -1,0 +1,79 @@
+name: Release
+
+# Déclenché par un tag :  git tag v1.4.2  puis  git push --tags
+# Construit MessagerieChiffree.exe, signe le manifeste et publie la release GitHub.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Numéro de version depuis le tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+(\.[0-9]+){0,3}$'; then
+            echo "Tag invalide : $GITHUB_REF_NAME (attendu : v1.2.3)"; exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          sed -i "s/^VERSION = \".*\"/VERSION = \"$VERSION\"/" backend/mise_a_jour.py
+          grep '^VERSION' backend/mise_a_jour.py
+
+      - name: Contrôle de la configuration des mises à jour
+        shell: bash
+        run: |
+          if grep -Eq 'TON_COMPTE|COLLE_ICI' backend/mise_a_jour.py; then
+            echo "Renseigne DEPOT et CLE_PUBLIQUE_B64 dans backend/mise_a_jour.py avant de publier."; exit 1
+          fi
+
+      - name: Dépendances Python
+        run: pip install -r backend/requirements.txt pyinstaller httpx
+
+      - name: Tests des mises à jour
+        run: python backend/tests/test_maj.py
+
+      - name: Compilation de l'interface
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Création de l'exécutable
+        shell: cmd
+        run: python -m PyInstaller --noconfirm --onefile --name MessagerieChiffree --add-data "frontend\dist;frontend\dist" --add-data "backend\relais_static;relais_static" --hidden-import relais --collect-submodules uvicorn backend\main.py
+
+      - name: Signature du manifeste
+        shell: bash
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          NOTES="$(git log -1 --pretty=%s)"
+          python tools/signer_release.py \
+            --exe dist/MessagerieChiffree.exe \
+            --version "$VERSION" \
+            --depot "$GITHUB_REPOSITORY" \
+            --notes "$NOTES"
+
+      - name: Publication de la release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/MessagerieChiffree.exe
+            version.json
+          generate_release_notes: true
