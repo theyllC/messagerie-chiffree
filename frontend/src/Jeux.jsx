@@ -91,7 +91,7 @@ export function CartePfc({ jeu, moi, pret, nom, onAction, portee }) {
 
   function sEngager(coup) {
     const sel = selAleatoire();
-    const h = engagement(jeu.n, jeu.manche, coup, sel);
+    const h = engagement(jeu.n, jeu.manche, monMarque, coup, sel);
     ecrireSecret(portee, jeu.n, jeu.manche, { m: coup, x: sel, h });
     setChoisi(jeu.manche);
     onAction({ a: "engage", c: jeu.n, r: jeu.manche, h });

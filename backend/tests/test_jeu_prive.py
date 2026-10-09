@@ -105,6 +105,19 @@ try:
     A.post("/api/envoyer", json={"ip": IPB, "message": "gg !", "contact_cle": True})
     check("un vrai message passe toujours dans le fil", attendre(lambda: [m["clair"] for m in conv(B, IPA)["messages"]] == ["gg !"]))
 
+    # Un texte saisi ne peut pas se faire passer pour un coup de jeu (il serait invisible chez le destinataire)
+    faux = "\x07JEU:" + json.dumps({"j": "morpion", "a": "defi", "g": "abcd1234"})
+    check("envoi normal d'un texte commençant par le marqueur de jeu refusé (clé échangée)",
+          A.post("/api/envoyer", json={"ip": IPB, "message": faux, "contact_cle": True}).status_code == 400)
+    check("même refus avec des espaces avant le marqueur (le texte est nettoyé avant l'envoi)",
+          A.post("/api/envoyer", json={"ip": IPB, "message": "  \n" + faux, "contact_cle": True}).status_code == 400)
+    check("même refus avec une clé saisie à la main",
+          A.post("/api/envoyer", json={"ip": IPB, "message": "\x07JEU:{", "cle": "une-cle-assez-longue"}).status_code == 400)
+    check("même refus pour un envoi groupé", A.post("/api/envoyer-groupe", json={"destinataires": [IPB], "message": faux}).status_code == 400)
+    check("le marqueur au milieu d'un texte reste permis", A.post("/api/envoyer", json={"ip": IPB, "message": "voici \x07JEU: au milieu", "contact_cle": True}).status_code == 200)
+    time.sleep(1)
+    check("rien n'est parti pour les textes refusés", all(not (m["clair"] or "").startswith("\x07JEU:") for m in conv(B, IPA)["messages"]))
+
 
     # ------------------------------------------------------------------ pierre-feuille-ciseaux avec engagement
     check("engagement mal formé refusé", jeu(A, IPB, j="pfc", a="engage", g=g, r=0, h="abc").status_code == 400)
@@ -119,12 +132,12 @@ try:
     check("A lance un défi pierre-feuille-ciseaux", r.status_code == 200)
     gp = r.json()["g"]
     jeu(B, IPA, j="pfc", a="accepte", g=gp)
-    H = lambda r_, coup, sel: hashlib.sha256(f"{gp}|{r_}|{coup}|{sel}".encode()).hexdigest()  # même format que le moteur JavaScript
+    H = lambda r_, cote, coup, sel: hashlib.sha256(f"{gp}|{r_}|{cote}|{coup}|{sel}".encode()).hexdigest()  # même format que le moteur JavaScript
     sels = {("a", 0): "a1" * 16, ("b", 0): "b2" * 16, ("a", 1): "c3" * 16, ("b", 1): "d4" * 16}
     manches = [(0, "p", "c"), (1, "f", "p")]  # A gagne les deux : pierre > ciseaux, feuille > pierre
     for r_, ca, cb_ in manches:
-        check(f"manche {r_} : A s'engage", jeu(A, IPB, j="pfc", a="engage", g=gp, r=r_, h=H(r_, ca, sels[("a", r_)])).status_code == 200)
-        check(f"manche {r_} : B s'engage", jeu(B, IPA, j="pfc", a="engage", g=gp, r=r_, h=H(r_, cb_, sels[("b", r_)])).status_code == 200)
+        check(f"manche {r_} : A s'engage", jeu(A, IPB, j="pfc", a="engage", g=gp, r=r_, h=H(r_, "x", ca, sels[("a", r_)])).status_code == 200)
+        check(f"manche {r_} : B s'engage", jeu(B, IPA, j="pfc", a="engage", g=gp, r=r_, h=H(r_, "o", cb_, sels[("b", r_)])).status_code == 200)
         check(f"manche {r_} : A révèle", jeu(A, IPB, j="pfc", a="revele", g=gp, r=r_, m=ca, x=sels[("a", r_)]).status_code == 200)
         check(f"manche {r_} : B révèle", jeu(B, IPA, j="pfc", a="revele", g=gp, r=r_, m=cb_, x=sels[("b", r_)]).status_code == 200)
     attendre(lambda: len([e for e in jeux_de(B, IPA) if e.get("g") == gp]) == 10 and len([e for e in jeux_de(A, IPB, IPA) if e.get("g") == gp]) == 10)

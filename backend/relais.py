@@ -33,6 +33,7 @@ mais le code de salle et le jeton circulent en clair sur le réseau local.
 """
 import hashlib
 import json
+import math
 import os
 import secrets
 import socket
@@ -65,6 +66,7 @@ MAX_PUB, MAX_WRAP = 2048, 1400    # clé publique (base64 DER) et clé du salon 
 MAX_EPOQUES = 20                  # époques de clé gardées par membre
 ROLES = ("eleve", "admin", "createur")
 LOT_SALON = 300                   # événements rendus par appel à /salon
+QUOTA_SALON, FENETRE_QUOTA = 20, 10  # au plus 20 envois par membre en 10 s (messages, réactions, votes, coups) : sinon un seul membre fait sortir les autres des MAX_SALON événements gardés
 
 DOSSIER = Path(os.environ.get("APPDATA") or Path.home()) / "MessagerieChiffree" / "relais"
 FICHIER_ETAT = DOSSIER / "etat.json"
@@ -74,6 +76,7 @@ relais_app = FastAPI()
 verrou = threading.RLock()
 # salles : {code: {"nom", "cree", "membres": {id: {"pseudo", "avatar", "hash", "vu"}}}}
 salles = {}
+envois_salon = {}  # (code de salle, id du membre) -> instants (monotonic) de ses derniers envois dans le salon ; en mémoire seulement
 # boites : {id: {"n": dernier numéro, "msgs": [{"n", "de", "data", "heure", "t"}]}}
 boites = {}
 echecs = {}   # {adresse: [instants des codes faux]}
@@ -181,6 +184,28 @@ def membre_authentifie(jeton):
                 m["vu"] = time.time()
                 return code, mid, m
     raise HTTPException(401, "Jeton inconnu : tu as été retiré de la salle ou le relais a changé. Rejoins de nouveau la salle.")
+
+
+def _maintenant_quota():
+    return time.monotonic()
+
+
+def verifier_quota_salon(code, mid):
+    """Fenêtre glissante par membre : lève 429 au-delà de QUOTA_SALON envois en FENETRE_QUOTA secondes. Verrou pris.
+    Les envois refusés ne sont pas comptés : on peut reprendre dès que la fenêtre s'est vidée. Le relais ne voit que du chiffré, le quota
+    porte donc sur tous les envois du salon, pas seulement sur les coups ou les réactions."""
+    t = _maintenant_quota()
+    recents = [x for x in envois_salon.get((code, mid), []) if t - x < FENETRE_QUOTA]
+    if len(recents) >= QUOTA_SALON:
+        envois_salon[(code, mid)] = recents
+        attente = max(1, math.ceil(FENETRE_QUOTA - (t - recents[0])))
+        raise HTTPException(429, f"Trop d'envois d'affilée : attends {attente} s ({QUOTA_SALON} envois au maximum par {FENETRE_QUOTA} s).",
+                            headers={"Retry-After": str(attente)})
+    recents.append(t)
+    envois_salon[(code, mid)] = recents
+    if len(envois_salon) > 5000:  # ménage : membres partis ou silencieux depuis longtemps
+        for cle in [k for k, v in envois_salon.items() if not v or t - v[-1] >= FENETRE_QUOTA]:
+            del envois_salon[cle]
 
 
 def trop_d_echecs(adresse):
@@ -401,6 +426,7 @@ def salon_envoyer(d: MsgSalon, x_relais_token: str = Header(default="")):
             raise HTTPException(409, "Le salon n'a pas encore de clé : le créateur doit ouvrir son coffre.")
         if d.epoque != salle["epoque"]:
             raise HTTPException(409, "La clé du salon vient de changer : réessaie dans quelques secondes.")
+        verifier_quota_salon(code, moi)
         salle["salon_n"] = int(salle.get("salon_n", 0)) + 1
         msgs = salle.setdefault("salon", [])
         msg = {"n": salle["salon_n"], "de": moi, "epoque": d.epoque, "data": d.data, "heure": maintenant(), "t": time.time()}
@@ -481,6 +507,7 @@ def retirer_membre(code, mid):
     if salles[code]["membres"].pop(mid, None) is not None:
         salles[code]["retraits"] = salles[code].get("retraits", 0) + 1  # la clé du salon devra être renouvelée
     boites.pop(mid, None)
+    envois_salon.pop((code, mid), None)
     marquer_sale()
 
 

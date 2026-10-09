@@ -127,8 +127,8 @@ const pfc = (de, a, extra = {}) => ev(de, { k: "jeu", j: "pfc", a, ...extra });
 /* Une manche honnête : les deux s'engagent, puis les deux révèlent. Renvoie les 4 événements. */
 function manche(d, r, cx, co, selx = SEL(1), selo = SEL(2)) {
   return [
-    pfc("a", "engage", { c: d.n, r, h: engagement(d.n, r, cx, selx) }),
-    pfc("b", "engage", { c: d.n, r, h: engagement(d.n, r, co, selo) }),
+    pfc("a", "engage", { c: d.n, r, h: engagement(d.n, r, "x", cx, selx) }),
+    pfc("b", "engage", { c: d.n, r, h: engagement(d.n, r, "o", co, selo) }),
     pfc("a", "revele", { c: d.n, r, m: cx, x: selx }),
     pfc("b", "revele", { c: d.n, r, m: co, x: selo }),
   ];
@@ -162,8 +162,8 @@ t("pfc : égalité rejouée, puis victoire en 2 manches gagnantes", () => {
 });
 t("pfc : TRICHE — changer de coup après avoir vu l'autre = révélation refusée, la partie est perdue", () => {
   const [d, acc] = ouvrir();
-  const hx = engagement(d.n, 0, "p", SEL(1));
-  const evs = [d, acc, pfc("a", "engage", { c: d.n, r: 0, h: hx }), pfc("b", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "c", SEL(2)) }),
+  const hx = engagement(d.n, 0, "x", "p", SEL(1));
+  const evs = [d, acc, pfc("a", "engage", { c: d.n, r: 0, h: hx }), pfc("b", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "o", "c", SEL(2)) }),
     pfc("a", "revele", { c: d.n, r: 0, m: "f", x: SEL(1) })];  // A s'était engagé sur pierre, révèle feuille
   const g = partie(evs);
   assert.equal(g.etat, "fini");
@@ -172,41 +172,62 @@ t("pfc : TRICHE — changer de coup après avoir vu l'autre = révélation refus
 });
 t("pfc : TRICHE — mauvais sel, même coup", () => {
   const [d, acc] = ouvrir();
-  const evs = [d, acc, pfc("a", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "p", SEL(1)) }), pfc("b", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "c", SEL(2)) }),
+  const evs = [d, acc, pfc("a", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "x", "p", SEL(1)) }), pfc("b", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "o", "c", SEL(2)) }),
     pfc("a", "revele", { c: d.n, r: 0, m: "p", x: SEL(9) })];
   assert.equal(partie(evs).motif, "triche");
 });
+t("pfc : TRICHE — Bob republie l'empreinte d'Alice puis rejoue son coup et son sel : il ne peut plus faire « nul » et il perd", () => {
+  const [d, acc] = ouvrir();
+  const hA = engagement(d.n, 0, "x", "p", SEL(1));
+  const evs = [d, acc, pfc("a", "engage", { c: d.n, r: 0, h: hA }), pfc("b", "engage", { c: d.n, r: 0, h: hA }),  // copie de l'empreinte
+    pfc("a", "revele", { c: d.n, r: 0, m: "p", x: SEL(1) }), pfc("b", "revele", { c: d.n, r: 0, m: "p", x: SEL(1) })];  // Bob rejoue le coup et le sel d'Alice
+  const g = partie(evs);
+  assert.equal(g.etat, "fini");
+  assert.equal(g.gagnant, "x");
+  assert.equal(g.motif, "triche");
+  assert.equal(g.manches.length, 0);  // la manche n'est jamais comptée « nul »
+});
+t("pfc : la copie ne profite pas à Bob, quel que soit l'ordre des révélations", () => {
+  const [d, acc] = ouvrir();
+  const hA = engagement(d.n, 0, "x", "p", SEL(1));
+  const evs = [d, acc, pfc("a", "engage", { c: d.n, r: 0, h: hA }), pfc("b", "engage", { c: d.n, r: 0, h: hA }),
+    pfc("b", "revele", { c: d.n, r: 0, m: "p", x: SEL(1) })];  // Bob révèle avant Alice
+  const g = partie(evs);
+  assert.equal(g.gagnant, "x");
+  assert.equal(g.motif, "triche");
+});
 t("pfc : un second engagement dans la même manche est ignoré (on ne peut pas se raviser)", () => {
   const [d, acc] = ouvrir();
-  const evs = [d, acc, pfc("a", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "p", SEL(1)) }), pfc("a", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "f", SEL(3)) }),
-    pfc("b", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "c", SEL(2)) }), pfc("a", "revele", { c: d.n, r: 0, m: "p", x: SEL(1) }), pfc("b", "revele", { c: d.n, r: 0, m: "c", x: SEL(2) })];
+  const evs = [d, acc, pfc("a", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "x", "p", SEL(1)) }), pfc("a", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "x", "f", SEL(3)) }),
+    pfc("b", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "o", "c", SEL(2)) }), pfc("a", "revele", { c: d.n, r: 0, m: "p", x: SEL(1) }), pfc("b", "revele", { c: d.n, r: 0, m: "c", x: SEL(2) })];
   const g = partie(evs);
   assert.equal(g.etat, "en_cours");
   assert.equal(g.manches[0].x, "p");
 });
 t("pfc : une révélation avant l'engagement de l'autre est ignorée", () => {
   const [d, acc] = ouvrir();
-  const evs = [d, acc, pfc("a", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "p", SEL(1)) }), pfc("a", "revele", { c: d.n, r: 0, m: "p", x: SEL(1) })];
+  const evs = [d, acc, pfc("a", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "x", "p", SEL(1)) }), pfc("a", "revele", { c: d.n, r: 0, m: "p", x: SEL(1) })];
   const g = partie(evs);
   assert.equal(g.rondes[0].x.m, undefined);
   assert.equal(g.manches.length, 0);
 });
 t("pfc : un engagement ne se réutilise pas dans une autre manche ni une autre partie", () => {
   const [d, acc] = ouvrir();
-  const h0 = engagement(d.n, 0, "p", SEL(1));
-  assert.notEqual(h0, engagement(d.n, 1, "p", SEL(1)));
-  assert.notEqual(h0, engagement(d.n + 1, 0, "p", SEL(1)));
+  const h0 = engagement(d.n, 0, "x", "p", SEL(1));
+  assert.notEqual(h0, engagement(d.n, 1, "x", "p", SEL(1)));
+  assert.notEqual(h0, engagement(d.n + 1, 0, "x", "p", SEL(1)));
+  assert.notEqual(h0, engagement(d.n, 0, "o", "p", SEL(1)));  // ni chez l'autre joueur
 });
 t("pfc : un tiers ne peut ni s'engager ni révéler ; événement d'une mauvaise manche ignoré", () => {
   const [d, acc] = ouvrir();
-  const evs = [d, acc, pfc("c", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "p", SEL(1)) }), pfc("a", "engage", { c: d.n, r: 1, h: engagement(d.n, 1, "p", SEL(1)) })];
+  const evs = [d, acc, pfc("c", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "x", "p", SEL(1)) }), pfc("a", "engage", { c: d.n, r: 1, h: engagement(d.n, 1, "x", "p", SEL(1)) })];
   const g = partie(evs);
   assert.deepEqual(g.rondes, {});
 });
 t("pfc privé : manche complète, ordre d'arrivée mélangé (engagements/révélations entrelacés)", () => {
   const P = (sens, a, extra = {}) => ({ sens, j: "pfc", g: "cccc0003", a, ...extra });
-  const h = (co, sel) => engagement("cccc0003", 0, co, sel);
-  const evs = [P("envoye", "defi"), P("recu", "accepte"), P("envoye", "engage", { r: 0, h: h("p", SEL(1)) }), P("recu", "engage", { r: 0, h: h("c", SEL(2)) }),
+  const h = (cote, co, sel) => engagement("cccc0003", 0, cote, co, sel);
+  const evs = [P("envoye", "defi"), P("recu", "accepte"), P("envoye", "engage", { r: 0, h: h("x", "p", SEL(1)) }), P("recu", "engage", { r: 0, h: h("o", "c", SEL(2)) }),
     P("envoye", "revele", { r: 0, m: "p", x: SEL(1) }), P("recu", "revele", { r: 0, m: "c", x: SEL(2) })];
   const g1 = deriverPrive(evs)[0];
   const g2 = deriverPrive([evs[5], evs[3], evs[0], evs[4], evs[2], evs[1]])[0];
@@ -215,8 +236,8 @@ t("pfc privé : manche complète, ordre d'arrivée mélangé (engagements/révé
 });
 t("pfc privé : révélation falsifiée détectée", () => {
   const P = (sens, a, extra = {}) => ({ sens, j: "pfc", g: "cccc0004", a, ...extra });
-  const evs = [P("envoye", "defi"), P("recu", "accepte"), P("envoye", "engage", { r: 0, h: engagement("cccc0004", 0, "p", SEL(1)) }),
-    P("recu", "engage", { r: 0, h: engagement("cccc0004", 0, "c", SEL(2)) }), P("recu", "revele", { r: 0, m: "f", x: SEL(2) })];
+  const evs = [P("envoye", "defi"), P("recu", "accepte"), P("envoye", "engage", { r: 0, h: engagement("cccc0004", 0, "x", "p", SEL(1)) }),
+    P("recu", "engage", { r: 0, h: engagement("cccc0004", 0, "o", "c", SEL(2)) }), P("recu", "revele", { r: 0, m: "f", x: SEL(2) })];
   const g = deriverPrive(evs)[0];
   assert.equal(g.motif, "triche");
   assert.equal(g.gagnant, "x");

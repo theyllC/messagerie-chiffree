@@ -24,10 +24,12 @@ export const COUPS_PFC = { p: { nom: "Pierre", icone: "✊", bat: "c" }, f: { no
 export const MANCHES_GAGNANTES = 2;   // première à 2 manches (égalités rejouées)
 export const MANCHES_MAX = 10;
 
-/* Engagement : empreinte SHA-256 de « partie | manche | coup | sel ». Le sel (128 bits aléatoires) empêche de retrouver le coup en essayant
-   les 3 possibilités ; la partie et la manche empêchent de réutiliser un engagement dans un autre contexte. */
-export const texteEngagement = (partie, manche, coup, sel) => `${partie}|${manche}|${coup}|${sel}`;
-export const engagement = (partie, manche, coup, sel) => sha256Hex(texteEngagement(partie, manche, coup, sel));
+/* Engagement : empreinte SHA-256 de « partie | manche | côté | coup | sel ». Le sel (128 bits aléatoires) empêche de retrouver le coup en essayant
+   les 3 possibilités ; la partie et la manche empêchent de réutiliser un engagement dans un autre contexte ; le côté (« x » ou « o ») lie
+   l'empreinte à son auteur : l'empreinte d'Alice republiée par Bob ne se révèle pas comme la sienne (sinon il rejouerait son coup et son sel
+   pour faire « nul » à chaque fois). */
+export const texteEngagement = (partie, manche, cote, coup, sel) => `${partie}|${manche}|${cote}|${coup}|${sel}`;
+export const engagement = (partie, manche, cote, coup, sel) => sha256Hex(texteEngagement(partie, manche, cote, coup, sel));
 
 function nouvellePartie(ev) {
   const base = { n: ev.n, j: ev.j, etat: "attente", x: { id: ev.de, pseudo: ev.pseudo }, o: null, gagnant: null };
@@ -78,7 +80,7 @@ function appliquerPfc(g, ev) {
   }
   if (ev.a === "revele") {
     if (!cote.h || !ronde[autre].h || cote.m) return;  // pas d'engagement, ou l'autre ne s'est pas encore engagé, ou déjà révélé
-    if (engagement(g.n, g.manche, ev.m, ev.x) !== cote.h) {
+    if (engagement(g.n, g.manche, moi, ev.m, ev.x) !== cote.h) {
       cote.triche = true;
       terminer(g, autre, "triche");  // la révélation ne correspond pas à l'engagement
       return;

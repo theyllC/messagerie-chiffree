@@ -1406,6 +1406,7 @@ def api_envoyer(e: Envoi):
         raise HTTPException(400, "Il faut une adresse IP et un message.")
     if len(message) > MAX_MESSAGE:
         raise HTTPException(400, f"Le message est trop long ({MAX_MESSAGE} caractères maximum).")
+    refuser_marqueur_jeu(message)
     if e.rsa_direct:
         with verrou:
             exiger_ouvert()
@@ -1489,6 +1490,7 @@ def api_envoyer_groupe(g: EnvoiGroupe):
         raise HTTPException(400, "Écris un message.")
     if len(message) > MAX_MESSAGE:
         raise HTTPException(400, f"Le message est trop long ({MAX_MESSAGE} caractères maximum).")
+    refuser_marqueur_jeu(message)
     if g.fichier:
         raise HTTPException(400, "Les pièces jointes ne sont pas encore disponibles pour un envoi groupé.")
     exiger_ouvert()
@@ -1730,13 +1732,28 @@ def assainir_jeu_prive(d):
 
 
 def evenement_jeu(clair):
-    """None si ce texte n'est pas un événement de jeu ; sinon (True, événement valide ou None si mal formé)."""
+    """L'événement de jeu valide contenu dans ce texte, ou None. None aussi pour un texte qui commence par le marqueur mais qui est mal
+    formé : ce n'est pas un coup de jeu, c'est un message comme un autre (sinon un contact pourrait rendre un message invisible)."""
     if not (isinstance(clair, str) and clair.startswith(PREFIXE_JEU)):
         return None
     try:
-        return True, assainir_jeu_prive(json.loads(clair[len(PREFIXE_JEU):]))
+        return assainir_jeu_prive(json.loads(clair[len(PREFIXE_JEU):]))
     except ValueError:
-        return True, None
+        return None
+
+
+def texte_visible(clair):
+    """Texte à afficher pour un message qui n'est pas un coup de jeu : un texte mal formé qui commence par le marqueur est montré
+    tel quel, sans le caractère de contrôle (qui ne s'affiche pas)."""
+    if isinstance(clair, str) and clair.startswith(PREFIXE_JEU):
+        return clair[1:]
+    return clair
+
+
+def refuser_marqueur_jeu(texte):
+    """Un texte saisi ne doit pas commencer par le marqueur réservé aux coups de jeu : il serait pris pour un coup chez le destinataire."""
+    if isinstance(texte, str) and texte.startswith(PREFIXE_JEU):
+        raise HTTPException(400, "Ce message commence par un marqueur réservé aux parties privées : change le début du texte.")
 
 
 class JeuPrive(BaseModel):
@@ -1788,11 +1805,10 @@ def api_conversation(ip: str):
                 except Exception:
                     clair = None
             jeu = evenement_jeu(clair)
-            if jeu:  # coup de jeu : pas de bulle, la partie est reconstituée côté interface
-                if jeu[1]:
-                    jeux.append({"id": m["id"], "sens": m["sens"], "heure": m["heure"], **jeu[1]})
+            if jeu:  # coup de jeu valide : pas de bulle, la partie est reconstituée côté interface
+                jeux.append({"id": m["id"], "sens": m["sens"], "heure": m["heure"], **jeu})
                 continue
-            clair, cite = decouper_reponse(clair)
+            clair, cite = decouper_reponse(texte_visible(clair))
             rep = {"moi": (cite["s"] == 1) == (m["sens"] == "envoye"), "x": cite["x"]} if cite else None
             brut_crypte = m.get("crypte") or ""
             messages.append({"id": m["id"], "sens": m["sens"], "heure": m["heure"], "rep": rep,
@@ -2017,7 +2033,7 @@ def _appel_salon(methode, chemin, corps=None, delai=6):
     try:
         return appel_relais(methode, chemin, corps, delai=delai)
     except ErreurRelais as e:
-        raise HTTPException(502 if e.statut == 0 else (403 if e.statut == 403 else 400), e.detail)
+        raise HTTPException(502 if e.statut == 0 else (e.statut if e.statut in (403, 429) else 400), e.detail)
 
 
 @app.get("/api/relais/salon")
@@ -2665,7 +2681,7 @@ def api_dechiffrer(d: Dechiffrement):
     texte_rep, cite = decouper_reponse(clair)
     if cite:
         clair = f"↩ « {cite['x']} »\n{texte_rep}"
-    resultat = {"clair": "🎮 Coup de jeu (visible dans l'onglet Conversations)" if evenement_jeu(clair) else clair}
+    resultat = {"clair": "🎮 Coup de jeu (visible dans l'onglet Conversations)" if evenement_jeu(clair) else texte_visible(clair)}
     if brut[0] in (3, 4) and clair.startswith("{"):  # pièce jointe
         try:
             resultat = {"clair": "", "fichier": lire_enveloppe_fichier(clair)}
