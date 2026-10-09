@@ -1708,6 +1708,8 @@ def assainir_jeu_prive(d):
     Pas de numéro de relais ici : l'ordre vient de « s » (numéro du coup, morpion) ou de la manche « r » (pierre-feuille-ciseaux)."""
     if not isinstance(d, dict) or d.get("j") not in JEUX_SALON or d.get("a") not in ACTIONS_JEU:
         return None
+    if d.get("a") == "forfait":
+        return None  # pas de relais pour dater un forfait entre deux contacts : seul « Abandonner » existe dans les parties privées
     g = d.get("g")
     if not (isinstance(g, str) and ID_PARTIE.match(g)):
         return None
@@ -1965,7 +1967,7 @@ class CibleMembreSalon(BaseModel):
 
 REACTIONS_SALON = ("👍", "❤️", "😂", "😮", "😢", "🎉", "🔥", "👀")
 JEUX_SALON = {"morpion": 9, "pfc": 0}  # jeu -> nombre de cases (morpion) ; pierre-feuille-ciseaux n'a pas de grille
-ACTIONS_JEU = ("defi", "accepte", "coup", "abandon", "engage", "revele")
+ACTIONS_JEU = ("defi", "accepte", "coup", "abandon", "engage", "revele", "forfait")  # « forfait » : pierre-feuille-ciseaux du salon seulement (datée par le relais)
 COUPS_PFC = ("p", "f", "c")  # pierre, feuille, ciseaux
 HEX64, HEX32 = re.compile(r"^[0-9a-f]{64}$"), re.compile(r"^[0-9a-f]{32}$")
 MANCHES_PFC = 10  # manches maximum d'une partie (les égalités se rejouent)
@@ -1975,8 +1977,10 @@ def champs_pfc(a, d):
     """Champs d'une action de pierre-feuille-ciseaux : « engage » = empreinte SHA-256 du coup caché, « revele » = coup + sel (le sel
     fait que l'empreinte ne se devine pas en essayant les 3 coups). None si mal formé."""
     r = d.get("r")
-    if a in ("engage", "revele") and not (isinstance(r, int) and not isinstance(r, bool) and 0 <= r < MANCHES_PFC):
+    if a in ("engage", "revele", "forfait") and not (isinstance(r, int) and not isinstance(r, bool) and 0 <= r < MANCHES_PFC):
         return None
+    if a == "forfait":
+        return {"r": r}  # le délai se mesure avec l'heure du relais : le moteur compare l'heure du forfait à celle des engagements
     if a == "engage":
         h = d.get("h")
         return {"r": r, "h": h} if isinstance(h, str) and HEX64.match(h) else None
@@ -2063,6 +2067,8 @@ def api_relais_salon(apres: int = 0):
         contenu = dechiffrer_salon(m["data"], m["epoque"], m["de"])
         item = {"n": m["n"], "de": m["de"], "heure": str(m.get("heure", "")), "moi": m["de"] == moi,
                 "pseudo": fiche.get("pseudo", ""), "avatar": fiche.get("avatar", ""), "role": fiche.get("role", "eleve"), "etat": "ok"}
+        if isinstance(m.get("t"), (int, float)) and not isinstance(m.get("t"), bool):
+            item["t"] = float(m["t"])  # heure du relais (il date chaque événement) : sert aux délais de forfait ; posé avant le contenu, qui ne peut pas l'écraser
         if isinstance(contenu, dict) and contenu.get("k", "msg") != "msg":
             ev = assainir_evenement(contenu.get("k"), contenu)  # type inconnu ou mal formé : ignoré (compatible avec les versions futures)
             if ev is None:

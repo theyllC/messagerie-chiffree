@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { COUPS_PFC, MANCHES_GAGNANTES, engagement } from "./salonEvenements.js";
+import { COUPS_PFC, DELAI_FORFAIT, MANCHES_GAGNANTES, departForfait, engagement } from "./salonEvenements.js";
 
 /* Cartes de jeu partagées : salon de la salle et conversations privées. Elle ne connaît pas le transport :
    elle affiche une partie (voir salonEvenements.js) et rend les actions choisies via onAction. */
@@ -67,7 +67,7 @@ function selAleatoire() {
 
 const court = (h) => (h ? `${h.slice(0, 10)}…` : "");
 
-export function CartePfc({ jeu, moi, pret, nom, onAction, portee }) {
+export function CartePfc({ jeu, moi, pret, nom, onAction, portee, maintenant }) {
   const dernierEnvoi = useRef({});
   const [choisi, setChoisi] = useState(null);  // manche pour laquelle je viens de cliquer (évite un double engagement avant le retour du serveur)
   const monMarque = jeu && (jeu.x.id === moi ? "x" : jeu.o && jeu.o.id === moi ? "o" : null);
@@ -75,6 +75,14 @@ export function CartePfc({ jeu, moi, pret, nom, onAction, portee }) {
   const moiCote = monMarque ? ronde[monMarque] : {};
   const autreCote = monMarque ? ronde[monMarque === "x" ? "o" : "x"] : {};
   const secret = jeu && monMarque ? lireSecret(portee, jeu.n, jeu.manche) : null;
+  const depart = jeu && monMarque && maintenant ? departForfait(jeu, monMarque) : null;
+  const [, setTic] = useState(0);
+  useEffect(() => {  // décompte du délai : on se réaffiche chaque seconde tant qu'un forfait peut être réclamé
+    if (depart === null) return undefined;
+    const id = setInterval(() => setTic((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [depart]);
+  const resteForfait = depart === null ? null : Math.ceil(depart + DELAI_FORFAIT - maintenant());
 
   // Révélation automatique : dès que les deux empreintes sont publiées, je révèle mon coup et mon sel (une seule tentative toutes les 8 s).
   useEffect(() => {
@@ -106,6 +114,7 @@ export function CartePfc({ jeu, moi, pret, nom, onAction, portee }) {
     else titre = "Les deux sont engagés : révélation…";
   } else if (jeu.gagnant === "nul") titre = "Match nul";
   else if (jeu.gagnant === "annule") titre = "Défi annulé";
+  else if (jeu.motif === "forfait") titre = `${noms[jeu.gagnant === "x" ? "o" : "x"]} n'a pas joué à temps (plus de ${DELAI_FORFAIT} s) : ${noms[jeu.gagnant]} gagne par forfait.`;
   else if (jeu.motif === "triche") titre = `${noms[jeu.gagnant === "x" ? "o" : "x"]} a triché : sa révélation ne correspondait pas à son engagement. ${noms[jeu.gagnant]} gagne.`;
   else titre = `${noms[jeu.gagnant]} gagne${jeu.abandon ? " (abandon)" : " !"}`;
 
@@ -144,6 +153,8 @@ export function CartePfc({ jeu, moi, pret, nom, onAction, portee }) {
       <div className="morpion-actions">
         {jeu.etat === "attente" && jeu.x.id !== moi && <button type="button" className="bouton petit" disabled={!pret} onClick={() => onAction({ a: "accepte", c: jeu.n })}>Relever le défi</button>}
         {jeu.etat === "attente" && jeu.x.id === moi && <button type="button" className="lien danger" onClick={() => onAction({ a: "abandon", c: jeu.n })}>Annuler le défi</button>}
+        {resteForfait !== null && resteForfait > 0 && <span className="note">Si {monMarque === "x" ? noms.o : noms.x} ne joue pas, forfait réclamable dans {resteForfait} s.</span>}
+        {resteForfait !== null && resteForfait <= 0 && <button type="button" className="bouton petit" disabled={!pret} onClick={() => onAction({ a: "forfait", c: jeu.n, r: jeu.manche })}>Réclamer le forfait de {monMarque === "x" ? noms.o : noms.x}</button>}
         {jeu.etat === "en_cours" && monMarque && <button type="button" className="lien danger" onClick={() => onAction({ a: "abandon", c: jeu.n })}>Abandonner</button>}
         {jeu.etat === "fini" && <button type="button" className="bouton secondaire petit" disabled={!pret} onClick={() => onAction({ a: "defi" })}>Lancer un nouveau défi</button>}
       </div>

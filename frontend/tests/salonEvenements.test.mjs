@@ -224,6 +224,83 @@ t("pfc : un tiers ne peut ni s'engager ni révéler ; événement d'une mauvaise
   const g = partie(evs);
   assert.deepEqual(g.rondes, {});
 });
+// --- forfait (salon seulement : l'heure vient du relais, champ « t ») ---
+function debutForfait(d, tA = 100, tB = 101) {
+  return [d, ...[pfc("a", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "x", "p", SEL(1)), t: tA }), pfc("b", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "o", "c", SEL(2)), t: tB })]];
+}
+t("forfait : l'adversaire ne révèle pas, forfait réclamé après 60 s depuis le dernier engagement → victoire", () => {
+  const [d, acc] = ouvrir();
+  const [, ea, eb] = debutForfait(d);
+  const g = partie([d, acc, ea, eb, pfc("a", "revele", { c: d.n, r: 0, m: "p", x: SEL(1), t: 102 }), pfc("a", "forfait", { c: d.n, r: 0, t: 161 })]);
+  assert.equal(g.etat, "fini");
+  assert.equal(g.gagnant, "x");
+  assert.equal(g.motif, "forfait");
+});
+t("forfait : trop tôt (59 s) → ignoré, la partie continue", () => {
+  const [d, acc] = ouvrir();
+  const [, ea, eb] = debutForfait(d);
+  const g = partie([d, acc, ea, eb, pfc("a", "revele", { c: d.n, r: 0, m: "p", x: SEL(1), t: 102 }), pfc("a", "forfait", { c: d.n, r: 0, t: 160 })]);
+  assert.equal(g.etat, "en_cours");
+});
+t("forfait : le délai court depuis le DERNIER engagement, pas depuis le premier", () => {
+  const [d, acc] = ouvrir();
+  const [, ea, eb] = debutForfait(d, 100, 150);  // Bob s'engage tard
+  const evs = [d, acc, ea, eb, pfc("a", "revele", { c: d.n, r: 0, m: "p", x: SEL(1), t: 151 })];
+  assert.equal(partie([...evs, pfc("a", "forfait", { c: d.n, r: 0, t: 180 })]).etat, "en_cours");  // 180 − 150 = 30 s
+  assert.equal(partie([...evs, pfc("a", "forfait", { c: d.n, r: 0, t: 210 })]).motif, "forfait");  // 210 − 150 = 60 s
+});
+t("forfait : refusé si l'adversaire a révélé (la manche se joue normalement)", () => {
+  const [d, acc] = ouvrir();
+  const [, ea, eb] = debutForfait(d);
+  const g = partie([d, acc, ea, eb, pfc("a", "revele", { c: d.n, r: 0, m: "p", x: SEL(1), t: 102 }), pfc("b", "revele", { c: d.n, r: 0, m: "c", x: SEL(2), t: 150 }),
+    pfc("a", "forfait", { c: d.n, r: 0, t: 400 })]);
+  assert.equal(g.manches.length, 1);
+  assert.notEqual(g.motif, "forfait");
+});
+t("forfait : refusé si le demandeur n'a pas lui-même révélé (les deux engagés)", () => {
+  const [d, acc] = ouvrir();
+  const [, ea, eb] = debutForfait(d);
+  const g = partie([d, acc, ea, eb, pfc("a", "forfait", { c: d.n, r: 0, t: 500 })]);
+  assert.equal(g.etat, "en_cours");
+});
+t("forfait : l'adversaire ne s'engage jamais → forfait 60 s après mon engagement", () => {
+  const [d, acc] = ouvrir();
+  const ea = pfc("a", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "x", "p", SEL(1)), t: 100 });
+  assert.equal(partie([d, acc, ea, pfc("a", "forfait", { c: d.n, r: 0, t: 159 })]).etat, "en_cours");
+  const g = partie([d, acc, ea, pfc("a", "forfait", { c: d.n, r: 0, t: 160 })]);
+  assert.equal(g.gagnant, "x");
+  assert.equal(g.motif, "forfait");
+});
+t("forfait : on ne peut pas réclamer un forfait sans s'être engagé soi-même", () => {
+  const [d, acc] = ouvrir();
+  const eb = pfc("b", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "o", "c", SEL(2)), t: 100 });
+  assert.equal(partie([d, acc, eb, pfc("a", "forfait", { c: d.n, r: 0, t: 999 })]).etat, "en_cours");
+});
+t("forfait : sans heure du relais (parties privées, vieux relais) → ignoré", () => {
+  const [d, acc] = ouvrir();
+  const ea = pfc("a", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "x", "p", SEL(1)) });  // pas de t
+  assert.equal(partie([d, acc, ea, pfc("a", "forfait", { c: d.n, r: 0, t: 9999 })]).etat, "en_cours");
+  const ea2 = pfc("a", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "x", "p", SEL(1)), t: 100 });
+  assert.equal(partie([d, acc, ea2, pfc("a", "forfait", { c: d.n, r: 0 })]).etat, "en_cours");  // forfait sans t
+  assert.equal(partie([d, acc, ea2, pfc("a", "forfait", { c: d.n, r: 0, t: "999" })]).etat, "en_cours");  // t qui n'est pas un nombre
+});
+t("forfait : un tiers, ou une mauvaise manche, ne compte pas", () => {
+  const [d, acc] = ouvrir();
+  const ea = pfc("a", "engage", { c: d.n, r: 0, h: engagement(d.n, 0, "x", "p", SEL(1)), t: 100 });
+  assert.equal(partie([d, acc, ea, pfc("c", "forfait", { c: d.n, r: 0, t: 999 })]).etat, "en_cours");
+  assert.equal(partie([d, acc, ea, pfc("a", "forfait", { c: d.n, r: 1, t: 999 })]).etat, "en_cours");
+});
+t("forfait : ne s'applique pas au morpion", () => {
+  const d = ev("a", { k: "jeu", j: "morpion", a: "defi" });
+  const evs = [d, ev("b", { k: "jeu", j: "morpion", a: "accepte", c: d.n }), ev("a", { k: "jeu", j: "morpion", a: "forfait", c: d.n, r: 0, t: 999 })];
+  assert.equal(deriver(evs).jeux.get(d.n).etat, "en_cours");
+});
+t("forfait : le moteur des parties privées l'ignore (aucun relais pour dater)", () => {
+  const P = (sens, a, extra = {}) => ({ sens, j: "pfc", g: "cccc0005", a, ...extra });
+  const evs = [P("envoye", "defi"), P("recu", "accepte"), P("envoye", "engage", { r: 0, h: engagement("cccc0005", 0, "x", "p", SEL(1)) }),
+    P("envoye", "forfait", { r: 0, t: 99999 })];
+  assert.equal(deriverPrive(evs)[0].etat, "en_cours");
+});
 t("pfc privé : manche complète, ordre d'arrivée mélangé (engagements/révélations entrelacés)", () => {
   const P = (sens, a, extra = {}) => ({ sens, j: "pfc", g: "cccc0003", a, ...extra });
   const h = (cote, co, sel) => engagement("cccc0003", 0, cote, co, sel);

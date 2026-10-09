@@ -126,6 +126,20 @@ try:
     check("le prof (spectateur) lit les engagements et la révélation", d and [m["a"] for m in pf if m["j"] == "pfc"] == ["defi", "accepte", "engage", "engage", "revele"])
     check("les engagements lus sont ceux envoyés", d and {m["h"] for m in pf if m["a"] == "engage"} == {H_A, H_B})
 
+    # ------------------------------------------------------------------ forfait (pierre-feuille-ciseaux du salon) et heure du relais
+    check("forfait valide accepté", ev(A, k="jeu", j="pfc", a="forfait", c=n_pfc, r=0).status_code == 200)
+    check("forfait sans manche refusé", ev(A, k="jeu", j="pfc", a="forfait", c=n_pfc).status_code == 400)
+    check("forfait avec une manche hors limite refusé", ev(A, k="jeu", j="pfc", a="forfait", c=n_pfc, r=10).status_code == 400)
+    check("forfait sans partie visée refusé", ev(A, k="jeu", j="pfc", a="forfait", r=0).status_code == 400)
+    check("forfait refusé pour le morpion", ev(A, k="jeu", j="morpion", a="forfait", c=n_defi, r=0).status_code == 400)
+    fo = attendre(lambda: next((m for m in evenements(P, "jeu") if m.get("a") == "forfait"), None))
+    check("le forfait est lu avec la manche visée", fo and fo["r"] == 0 and fo["c"] == n_pfc, str(fo))
+    jeux_pfc = [m for m in evenements(P, "jeu") if m.get("j") == "pfc"]
+    ts = [m.get("t") for m in jeux_pfc]
+    check("chaque événement porte l'heure du relais (nombre, croissante avec le numéro)", ts and all(isinstance(t, (int, float)) and not isinstance(t, bool) for t in ts)
+          and ts == sorted(ts) and abs(ts[-1] - time.time()) < 60, str(ts[-3:]))
+    check("les messages texte portent aussi l'heure du relais", all(isinstance(m.get("t"), float) for m in salon(A)["messages"]))
+
     # ------------------------------------------------------------------ le relais ne voit rien en clair
     time.sleep(6)  # le relais sauvegarde toutes les 5 s
     etat_disque = ""
@@ -134,8 +148,10 @@ try:
             if f.endswith(".json"):
                 etat_disque += open(os.path.join(racine, f), encoding="utf-8").read()
     check("état du relais écrit sur disque", "salon" in etat_disque and len(etat_disque) > 500)
+    # Les mots-clés sont cherchés entre guillemets : du base64 ne peut pas les contenir par hasard (« pfc » seul, 3 lettres, y apparaissait
+    # au hasard dans environ 1 exécution sur 5).
     check("le relais n'a ni emoji, ni question de sondage, ni mot « morpion » en clair",
-          not any(mot in etat_disque for mot in ("👍", "🎉", "Pizza", "morpion", "Sushi", "defi", "accepte", "pfc", "engage", "revele", "ab" * 32, "11" * 16)))
+          not any(mot in etat_disque for mot in ("👍", "🎉", "Pizza", "Sushi", '"morpion"', '"defi"', '"accepte"', '"pfc"', '"engage"', '"revele"', '"forfait"', "ab" * 32, "11" * 16)))
 
     # ------------------------------------------------------------------ messages éphémères
     check("durée trop courte refusée", A.post("/api/relais/salon", json={"texte": "x", "ttl": 2}).status_code == 400)

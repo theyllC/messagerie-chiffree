@@ -126,6 +126,7 @@ try:
     check("sel trop court refusé", jeu(A, IPB, j="pfc", a="revele", g=g, r=0, m="p", x="00").status_code == 400)
     check("un coup de morpion ne s'applique pas à pfc", jeu(A, IPB, j="pfc", a="coup", g=g, i=1, s=0).status_code == 400)
     check("engagement refusé pour le morpion", jeu(A, IPB, j="morpion", a="engage", g=g, r=0, h="0" * 64).status_code == 400)
+    check("forfait refusé dans une partie privée (pas de relais pour le dater)", jeu(A, IPB, j="pfc", a="forfait", g=g, r=0).status_code == 400)
     A.get("/api/conversation?ip=" + IPB)
     B.post("/api/coffre/ouvrir", json={"mdp": "mdp-de-B-456"})
     r = jeu(A, IPB, j="pfc", a="defi")

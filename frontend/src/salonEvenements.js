@@ -23,6 +23,7 @@ export function gagnantMorpion(cases) {
 export const COUPS_PFC = { p: { nom: "Pierre", icone: "✊", bat: "c" }, f: { nom: "Feuille", icone: "✋", bat: "p" }, c: { nom: "Ciseaux", icone: "✌️", bat: "f" } };
 export const MANCHES_GAGNANTES = 2;   // première à 2 manches (égalités rejouées)
 export const MANCHES_MAX = 10;
+export const DELAI_FORFAIT = 60;  // secondes : au-delà, l'adversaire qui n'a pas joué peut être déclaré forfait (salon seulement)
 
 /* Engagement : empreinte SHA-256 de « partie | manche | côté | coup | sel ». Le sel (128 bits aléatoires) empêche de retrouver le coup en essayant
    les 3 possibilités ; la partie et la manche empêchent de réutiliser un engagement dans un autre contexte ; le côté (« x » ou « o ») lie
@@ -64,6 +65,22 @@ function terminer(g, gagnant, motif) {
   if (motif) g.motif = motif;
 }
 
+/* Forfait (salon seulement). Heure du relais à partir de laquelle l'adversaire de « moi » est en retard, ou null s'il ne l'est pas :
+   - j'ai révélé et l'autre, engagé aussi, n'a pas révélé : le délai court depuis le dernier des deux engagements ;
+   - je me suis engagé et l'autre ne s'est pas engagé : le délai court depuis mon engagement.
+   Celui qui réclame doit avoir joué sa part (engagé, ou révélé quand les deux sont engagés). Sans heure de relais (parties privées, vieux
+   relais), il n'y a pas de forfait possible. L'heure du forfait vient du relais, pas du client : on ne peut pas la tricher. */
+export function departForfait(g, moi) {
+  const ronde = g.rondes && g.rondes[g.manche];
+  if (!ronde || g.etat !== "en_cours") return null;
+  const moiCote = ronde[moi];
+  const autreCote = ronde[moi === "x" ? "o" : "x"];
+  if (!moiCote || !autreCote || autreCote.m || !moiCote.h || typeof moiCote.te !== "number") return null;
+  if (!autreCote.h) return moiCote.te;
+  if (!moiCote.m || typeof autreCote.te !== "number") return null;
+  return Math.max(moiCote.te, autreCote.te);
+}
+
 /* Pierre-feuille-ciseaux avec engagement. Par manche : chacun publie l'empreinte de son coup (« engage »), puis, quand les deux
    empreintes sont là, chacun révèle coup et sel (« revele »). Chaque révélation est vérifiée contre l'empreinte : on ne peut pas
    changer de coup après avoir vu celui de l'autre. Une révélation qui ne correspond pas fait perdre la partie. */
@@ -75,7 +92,15 @@ function appliquerPfc(g, ev) {
   const cote = ronde[moi];
   const autre = moi === "x" ? "o" : "x";
   if (ev.a === "engage") {
-    if (!cote.h) cote.h = ev.h;  // un seul engagement par manche : on ne peut pas en publier un second après coup
+    if (!cote.h) {  // un seul engagement par manche : on ne peut pas en publier un second après coup
+      cote.h = ev.h;
+      if (typeof ev.t === "number") cote.te = ev.t;  // heure du relais : point de départ du délai de l'adversaire
+    }
+    return;
+  }
+  if (ev.a === "forfait") {
+    const depart = departForfait(g, moi);
+    if (depart !== null && typeof ev.t === "number" && ev.t - depart >= DELAI_FORFAIT) terminer(g, moi, "forfait");
     return;
   }
   if (ev.a === "revele") {
@@ -117,7 +142,7 @@ function appliquerJeu(jeux, ev) {
     }
   } else if (ev.a === "coup" && g.j === "morpion") {
     appliquerCoupMorpion(g, ev);
-  } else if ((ev.a === "engage" || ev.a === "revele") && g.j === "pfc") {
+  } else if ((ev.a === "engage" || ev.a === "revele" || ev.a === "forfait") && g.j === "pfc") {
     appliquerPfc(g, ev);
   } else if (ev.a === "abandon") {
     const estX = ev.de === g.x.id;

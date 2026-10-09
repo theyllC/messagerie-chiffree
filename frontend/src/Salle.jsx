@@ -289,7 +289,7 @@ function Salon({ actif, profils }) {
               {m.supprime ? <p className="texte supprime">{expires.has(m.n) ? "💨 Message éphémère expiré" : "Message supprimé"}</p>
                 : lisible && m.k === "poll" ? <CarteSondage m={m} sondage={sondages.get(m.n)} moi={moi} pret={pret} onVoter={voter} />
                 : lisible && m.k === "jeu" ? (m.j === "pfc"
-                  ? <CartePfc jeu={jeux.get(m.n)} moi={moi} pret={pret} nom={nomJoueur} portee={`salon-${moi}`} onAction={(a) => actionJeu({ j: "pfc", ...a })} />
+                  ? <CartePfc jeu={jeux.get(m.n)} moi={moi} pret={pret} nom={nomJoueur} portee={`salon-${moi}`} maintenant={() => Date.now() / 1000 + decalage.current} onAction={(a) => actionJeu({ j: "pfc", ...a })} />
                   : <CarteMorpion jeu={jeux.get(m.n)} moi={moi} pret={pret} nom={nomJoueur} onAction={(a) => actionJeu({ j: "morpion", ...a })} />)
                 : lisible ? <p className="texte">{m.texte}</p>
                 : <p className="texte chiffre">{NOTE_ILLISIBLE[m.etat] || NOTE_ILLISIBLE.illisible}</p>}

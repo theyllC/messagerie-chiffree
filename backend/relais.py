@@ -447,7 +447,7 @@ def salon_lire(apres: int = 0, x_relais_token: str = Header(default="")):
         nouveaux = [x for x in tous if x["n"] > apres and not x.get("supprime")]
         nouveaux = nouveaux[-LOT_SALON:] if apres <= 0 else nouveaux[:LOT_SALON]  # première lecture : les plus récents
         return {"moi": moi, "moi_role": role_de(m), "epoque": salle.get("epoque", 0), "dernier": int(salle.get("salon_n", 0)),
-                "messages": [{**{k: x[k] for k in ("n", "de", "epoque", "data", "heure")}, **({"exp": x["exp"]} if "exp" in x else {})} for x in nouveaux],
+                "messages": [{**{k: x[k] for k in ("n", "de", "epoque", "data", "heure", "t")}, **({"exp": x["exp"]} if "exp" in x else {})} for x in nouveaux],
                 "supprimes": [x["n"] for x in tous if x.get("supprime")],
                 "expires": [x["n"] for x in tous if x.get("supprime") and x.get("expire")],  # effacés parce que leur durée de vie est écoulée
                 "horloge": time.time()}  # l'heure du relais : les clients calculent le temps restant d'un message éphémère sans dépendre de leur propre horloge
