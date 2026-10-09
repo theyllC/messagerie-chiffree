@@ -106,10 +106,10 @@ try:
     mj.prefixe_autorise = lambda: "file://"
 
     # ====================== 3. DÉTECTION D'UNE VERSION ======================
-    mj.url_manifeste = lambda: publier(signer_manifeste(prive, "1.0.1", url_exe, sha)).as_uri()
+    mj.url_manifeste = lambda: publier(signer_manifeste(prive, "99.0.9", url_exe, sha)).as_uri()
     reinitialiser()
     v = C.post("/api/maj/verifier").json()
-    check("version plus récente détectée", v["etat"] == "disponible" and v["nouvelle_version"] == "1.0.1" and v["notes"] == "Notes de test", str(v))
+    check("version plus récente détectée", v["etat"] == "disponible" and v["nouvelle_version"] == "99.0.9" and v["notes"] == "Notes de test", str(v))
 
     mj.url_manifeste = lambda: publier(signer_manifeste(prive, "1.0.0", url_exe, sha)).as_uri()
     reinitialiser()
