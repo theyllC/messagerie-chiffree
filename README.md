@@ -113,6 +113,13 @@ Les jeux à deux (salon et conversations privées) reposent sur un **cadre commu
 - **Corrections au passage** : (a) en partie privée, un contact pouvait renvoyer un défi avec le même identifiant pour remettre à zéro une partie qu'il perdait : le premier défi d'un identifiant est maintenant le seul pris en compte ; (b) un membre malveillant pouvait faire échouer la lecture du salon pour tous en envoyant un jeu sous forme de liste (exception non rattrapée côté lecture) : la validation refuse maintenant proprement tout type inattendu.
 - **Tests** : `node frontend/tests/jeuxCadre.test.mjs` (cycle de vie vérifié sur chaque jeu inscrit, engagement, triche, ordre des parties privées) et `python backend/tests/test_validation_jeux.py` (validation des événements, sans serveur).
 
+## Zone des parties d'une conversation privée
+Sous les messages, une barre « 🎮 Parties » (une ligne) remplace l'ancienne zone qui écrasait le chat. Elle s'ouvre toute seule quand un nouveau défi arrive ou est lancé, et se réduit d'un clic (▾) ou avec « Revenir à la conversation ».
+- **Fenêtre large** (conteneur d'au moins 1060 px) : les parties s'ouvrent dans un panneau à droite des messages ; chacun garde sa hauteur.
+- **Fenêtre étroite ou mobile** : les parties remplacent temporairement les messages. Il n'y a jamais deux zones qui défilent l'une dans l'autre.
+- **Fermer** : une partie terminée se ferme avec ✕ (ou « Fermer les terminées ») et ne revient plus sur ce navigateur. Une partie en cours ne se ferme pas : « Abandonner » ou « Annuler le défi ». Sans partie en cours, la dernière partie terminée reste visible pour voir le résultat ; les autres sont dans « Anciennes parties ».
+- Code : `frontend/src/ZoneParties.jsx` (composant), `frontend/src/partiesZone.js` (choix des parties à afficher, testé par `node frontend/tests/partiesZone.test.mjs`), règles de mise en page dans `styles.css`.
+
 ## Parties privées à deux (onglet Conversations)
 Le morpion se joue aussi en **1 contre 1 avec un contact**, sans salle ni relais : « ⭕ Défier au morpion » dans une conversation (clés échangées nécessaires).
 - Chaque action (défi, acceptation, coup, abandon) est un **message v2 ordinaire** chiffré avec la clé échangée, dont le texte commence par un marqueur de jeu. Il n'apparaît pas comme bulle de texte ; Historique et Recevoir affichent « Coup de jeu » au lieu du JSON.

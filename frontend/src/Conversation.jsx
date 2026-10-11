@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { api, post, erreur, info } from "./api.js";
 import { Avatar, Coches, Fichier, MAX_FICHIER, envoyerFichier, formatTaille } from "./composants.jsx";
 import { CartePartie } from "./Jeux.jsx";
+import ZoneParties from "./ZoneParties.jsx";
 import { jeuDefini, listeJeux } from "./jeux/index.js";
 import { deriverPrive } from "./salonEvenements.js";
 
@@ -32,6 +33,7 @@ function PieceJointe({ id, taille }) {
 /* Fil de discussion avec un contact. Les textes sont déchiffrés en mémoire à chaque affichage, jamais enregistrés. */
 export default function Conversation({ contacts, profils = {}, monProfil = {}, echanges, entrees, actif, choix, onEnvoye }) {
   const [ip, setIp] = useState("");
+  const [zoneOuverte, setZoneOuverte] = useState(false);  // la zone des parties est ouverte (voir ZoneParties) : change la mise en page du chat
   const [fil, setFil] = useState({ messages: [], jeux: [], ouvert: false });
   const [texte, setTexte] = useState("");
   const [statut, setStatut] = useState(null);
@@ -239,7 +241,7 @@ export default function Conversation({ contacts, profils = {}, monProfil = {}, e
           </ul>
         </aside>
 
-        <section className="chat-principal" aria-label="Conversation">
+        <section className={`chat-principal${zoneOuverte ? " jeux-ouverts" : ""}`} aria-label="Conversation">
           {!ip ? (
             <div className="chat-vide">
               <span className="chat-vide-icone" aria-hidden="true">💬</span>
@@ -317,13 +319,8 @@ export default function Conversation({ contacts, profils = {}, monProfil = {}, e
               </ul>
 
               {cleOk && parties.length > 0 && (
-                <section className="parties-privees parties-zone" aria-label="Parties avec ce contact">
-                  {parties.map((g) => (
-                    <div key={g.n} className="bulle large partie">
-                      <CartePartie j={g.j} jeu={g} moi="moi" pret={fil.ouvert} nom={nomJoueur} portee={`prive-${ip}`} onAction={(a) => jouer(actionPrivee(g, a))} />
-                    </div>
-                  ))}
-                </section>
+                <ZoneParties key={ip} parties={parties} ip={ip} onOuverture={setZoneOuverte}
+                             rendre={(g) => <CartePartie j={g.j} jeu={g} moi="moi" pret={fil.ouvert} nom={nomJoueur} portee={`prive-${ip}`} onAction={(a) => jouer(actionPrivee(g, a))} />} />
               )}
 
               {cleOk ? (

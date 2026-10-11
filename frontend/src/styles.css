@@ -596,7 +596,32 @@ dl.cles .zone { margin: 0; max-width: 100%; overflow-x: auto; font-size: .75rem;
 .chat-retour { display: none; margin-left: -8px; }
 
 .chat-principal .fil-conversation { flex: 1; min-height: 0; max-height: none; padding: 18px 22px 8px; }
-.parties-zone { max-height: 300px; overflow-y: auto; padding: 8px 22px; border-top: 1px solid var(--c-line); }
+/* Zone des parties (conversation privée). Réduite : une barre d'une ligne sous les messages.
+   Ouverte (classe jeux-ouverts sur le chat) : jamais deux zones qui défilent l'une dans l'autre.
+   - fenêtre étroite : les parties remplacent les messages, « Revenir à la conversation » les referme ;
+   - fenêtre large (conteneur >= 1060 px) : panneau à droite des messages, chacun garde sa hauteur. */
+.parties-zone { flex: 0 0 auto; padding: 0 22px 8px; border-top: 1px solid var(--c-line); }
+.parties-zone.reduite { padding-bottom: 0; }
+.parties-entete { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; padding: 6px 0; background: var(--c-comp); }
+.parties-bascule { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; margin-left: -8px; font: inherit; font-weight: 600; color: inherit; background: transparent; border: 0; border-radius: 10px; cursor: pointer; }
+.parties-bascule:hover { background: var(--c-user); }
+.parties-bascule:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 1px; }
+.parties-liste { display: flex; flex-direction: column; gap: var(--s3); }
+.parties-liste .partie { align-self: flex-start; max-width: 100%; }
+.parties-fermer { align-self: flex-end; }
+.parties-entete .lien { padding-left: 0; padding-right: 0; }
+.parties-retour { margin-left: auto; }
+.chat-principal.jeux-ouverts > .fil-conversation, .chat-principal.jeux-ouverts > .composeur-zone, .chat-principal.jeux-ouverts > .chat-sans-cle { display: none; }
+.chat-principal.jeux-ouverts > .parties-zone { flex: 1 1 auto; min-height: 0; overflow-y: auto; border-top: 0; }
+@container (min-width: 1060px) {
+  .chat-principal.jeux-ouverts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(290px, 340px); grid-template-rows: auto minmax(0, 1fr) auto; }
+  .chat-principal.jeux-ouverts > * { grid-column: 1; }
+  .chat-principal.jeux-ouverts > .chat-entete { grid-column: 1 / -1; }
+  .chat-principal.jeux-ouverts > .fil-conversation { display: flex; grid-row: 2; min-height: 0; }
+  .chat-principal.jeux-ouverts > .composeur-zone, .chat-principal.jeux-ouverts > .chat-sans-cle { display: flex; grid-row: 3; }
+  .chat-principal.jeux-ouverts > .parties-zone { grid-column: 2; grid-row: 2 / 4; border-left: 1px solid var(--c-line); }
+  .chat-principal.jeux-ouverts .parties-retour { display: none; }
+}
 .chat-principal .composeur-zone { padding: 6px 16px 14px; }
 .chat-sans-cle { padding: 14px 22px 18px; border-top: 1px solid var(--c-line); max-width: none; text-align: center; }
 .chat-vide { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 24px; text-align: center; }
