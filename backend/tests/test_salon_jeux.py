@@ -1,6 +1,7 @@
 """Test des événements du salon : réactions, sondages, votes, morpion, messages éphémères.
 Vérifie : tout est chiffré de bout en bout (le relais ne voit rien en clair), validation des entrées (envoi ET réception),
 messages éphémères effacés par le relais à l'échéance, durées invalides refusées.
+Le test du message « à ouvrir plus tard » attend 60 s (délai minimal).
 Prérequis : pip install httpx  ·  Lancer : python backend/tests/test_salon_jeux.py
 """
 import json
@@ -169,6 +170,35 @@ try:
     n_sup = A.post("/api/relais/salon", json={"texte": "à supprimer"}).json()["n"]
     A.post("/api/relais/salon/supprimer", json={"n": n_sup})
     check("un message supprimé à la main n'est pas « expiré »", n_sup in salon(B)["supprimes"] and n_sup not in salon(B)["expires"])
+
+    # ------------------------------------------------------------------ Sprint A : épinglage
+    n_epi = P.post("/api/relais/salon", json={"texte": "Consigne du jour"}).json()["n"]
+    check("épinglage envoyé (événement valide)", ev(P, k="pin", c=n_epi, on=True).status_code == 200)
+    check("épinglage sans message visé refusé", ev(P, k="pin", on=True).status_code == 400)
+    pin = attendre(lambda: next(iter(evenements(A, "pin")), None))
+    check("Alice lit l'épinglage, avec le rôle donné par le relais", pin and pin["c"] == n_epi and pin["on"] is True and pin["role"] in ("createur", "admin"), str(pin))
+
+    # ------------------------------------------------------------------ Sprint A : mentions
+    r = A.post("/api/relais/salon", json={"texte": "Salut @Bob et @Inconnu", "mentions": [id_b, "id-qui-n-existe-pas", id_b]})
+    n_men = r.json()["n"]
+    m = attendre(lambda: next((x for x in salon(B)["messages"] if x["n"] == n_men), None))
+    check("seuls les membres connus sont cités (inconnus et doublons retirés)", m and m.get("mentions") == [id_b], str(m and m.get("mentions")))
+    n_men0 = A.post("/api/relais/salon", json={"texte": "sans mention"}).json()["n"]
+    m0 = attendre(lambda: next((x for x in salon(B)["messages"] if x["n"] == n_men0), None))
+    check("un message sans mention n'a pas de liste", m0 and "mentions" not in m0)
+
+    # ------------------------------------------------------------------ Sprint A : message à ouvrir plus tard
+    check("délai trop court refusé", A.post("/api/relais/salon", json={"texte": "x", "ouvre_dans": 10}).status_code == 400)
+    check("délai trop long refusé", A.post("/api/relais/salon", json={"texte": "x", "ouvre_dans": 10 * 86400}).status_code == 400)
+    check("éphémère + à ouvrir plus tard refusé", A.post("/api/relais/salon", json={"texte": "x", "ouvre_dans": 60, "ttl": 60}).status_code == 400)
+    n_lock = A.post("/api/relais/salon", json={"texte": "Surprise du jour", "ouvre_dans": 60, "mentions": [id_b]}).json()["n"]
+    m = attendre(lambda: next((x for x in salon(B)["messages"] if x["n"] == n_lock), None))
+    d = salon(B)
+    check("verrouillé : Bob ne reçoit ni le texte ni les mentions", m and m.get("verrou") is True and m.get("texte") == "" and "mentions" not in m, str(m))
+    check("verrouillé : l'heure d'ouverture est celle du relais (~60 s)", m and 0 < m["ouvre"] - d["horloge"] <= 60, str(m and m["ouvre"] - d["horloge"]))
+    check("verrouillé : même chose pour l'auteur et le prof", all(next(x for x in salon(X)["messages"] if x["n"] == n_lock).get("texte") == "" for X in (A, P)))
+    ouvert = attendre(lambda: (lambda x: x if x and not x.get("verrou") else None)(next((x for x in salon(B)["messages"] if x["n"] == n_lock), None)), delai=80)
+    check("à l'heure, le message s'ouvre et son texte est transmis", ouvert and ouvert["texte"] == "Surprise du jour" and ouvert.get("mentions") == [id_b], str(ouvert))
 finally:
     for p in procs.values():
         p.terminate()

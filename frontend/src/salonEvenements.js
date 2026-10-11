@@ -13,6 +13,43 @@ export const DUREES = [
   { label: "24 h", ttl: 86400 },
 ];
 
+export const MAX_EPINGLES = 5;  // messages épinglés en même temps : le plus ancien se détache quand on en épingle un sixième
+export const DELAIS_OUVERTURE = [
+  { label: "Tout de suite", delai: 0 },
+  { label: "Dans 1 min", delai: 60 },
+  { label: "Dans 1 h", delai: 3600 },
+  { label: "Demain (24 h)", delai: 86400 },
+  { label: "Dans 3 jours", delai: 259200 },
+];
+
+/* Mentions : « @pseudo » dans un texte. On cherche les pseudos connus, les plus longs d'abord (« Anne-Marie » avant « Anne »),
+   et un pseudo doit finir sur une frontière (pas de lettre ou de chiffre derrière). Rend [{ t, mention }] pour l'affichage. */
+export function decouperMentions(texte, pseudos) {
+  const noms = [...new Set((pseudos || []).filter(Boolean))].sort((a, b) => b.length - a.length);
+  if (!noms.length || !texte.includes("@")) return [{ t: texte, mention: false }];
+  const morceaux = [];
+  let debut = 0;
+  let i = 0;
+  const bordure = (c) => c === undefined || !/[\p{L}\p{N}_]/u.test(c);
+  while (i < texte.length) {
+    if (texte[i] === "@" && (i === 0 || bordure(texte[i - 1]))) {
+      const nom = noms.find((x) => texte.slice(i + 1, i + 1 + x.length).toLowerCase() === x.toLowerCase() && bordure(texte[i + 1 + x.length]));
+      if (nom) {
+        if (i > debut) morceaux.push({ t: texte.slice(debut, i), mention: false });
+        morceaux.push({ t: texte.slice(i, i + 1 + nom.length), mention: true });
+        i += 1 + nom.length;
+        debut = i;
+        continue;
+      }
+    }
+    i += 1;
+  }
+  if (debut < texte.length) morceaux.push({ t: texte.slice(debut), mention: false });
+  return morceaux;
+}
+
+export const estMentionne = (m, moi) => Boolean(moi && Array.isArray(m.mentions) && m.mentions.includes(moi));
+
 const LIGNES = [[0, 1, 2], [3, 4, 5], [6, 7, 8], [0, 3, 6], [1, 4, 7], [2, 5, 8], [0, 4, 8], [2, 4, 6]];
 
 export function gagnantMorpion(cases) {
@@ -155,17 +192,20 @@ function appliquerJeu(jeux, ev) {
 }
 
 /* events : liste d'éléments du salon tels que rendus par /api/relais/salon (cumulés). supprimes : Set de numéros effacés.
-   Rend { fil, reactions, sondages, jeux } :
+   Rend { fil, reactions, sondages, jeux, epingles } :
    - fil : les éléments à afficher en bulles (messages, sondages, défis) ; les réactions, votes et coups n'ont pas de bulle ;
    - reactions : Map n -> Map emoji -> Set d'identifiants de membres ;
    - sondages : Map n -> { q, o, votes: Map id -> option, total: [compte par option] } ;
-   - jeux : Map n -> partie. */
+   - jeux : Map n -> partie ;
+   - epingles : numéros des messages épinglés (au plus MAX_EPINGLES), du plus ancien au plus récent. */
 export function deriver(events, supprimes = new Set()) {
   const tries = [...events].sort((a, b) => a.n - b.n);
   const fil = [];
   const reactions = new Map();
   const sondages = new Map();
   const jeux = new Map();
+  const epinglables = new Set();  // numéros des messages et sondages encore visibles
+  const epingles = new Map();     // numéro -> vrai, dans l'ordre où on les a épinglés
   for (const ev of tries) {
     if (ev.supprime || supprimes.has(ev.n)) {
       if (!ev.k || ev.k === "msg" || ev.k === "poll" || (ev.k === "jeu" && ev.a === "defi")) fil.push({ ...ev, supprime: true });
@@ -193,15 +233,27 @@ export function deriver(events, supprimes = new Set()) {
         appliquerJeu(jeux, ev);
         if (ev.a === "defi") fil.push(ev);
         break;
+      case "pin":
+        // Seuls un admin ou le créateur (rôle donné par le relais, pas par l'auteur) épinglent ; la cible doit être un message ou un sondage visible.
+        if ((ev.role === "admin" || ev.role === "createur") && epinglables.has(ev.c)) {
+          epingles.delete(ev.c);
+          if (ev.on) epingles.set(ev.c, true);
+        }
+        break;
       default:
+        if (!ev.k || ev.k === "msg") epinglables.add(ev.n);
         fil.push(ev);  // message texte (ou message illisible)
     }
+    if (ev.k === "poll") epinglables.add(ev.n);
   }
+  // Un message supprimé ou expiré se détache tout seul ; on garde les MAX_EPINGLES plus récents.
+  const vivants = new Set(fil.filter((m) => !m.supprime).map((m) => m.n));
+  const listeEpingles = [...epingles.keys()].filter((n) => vivants.has(n)).slice(-MAX_EPINGLES);
   for (const s of sondages.values()) {
     s.total = s.o.map(() => 0);
     for (const i of s.votes.values()) s.total[i] += 1;
   }
-  return { fil, reactions, sondages, jeux };
+  return { fil, reactions, sondages, jeux, epingles: listeEpingles };
 }
 
 /* Partie privée entre deux contacts (onglet Conversations) : les événements viennent de /api/conversation (liste « jeux »).

@@ -1937,6 +1937,8 @@ class MsgSalonEnvoi(BaseModel):
     texte: str = ""
     reponse_a: Optional[dict] = None  # {n, p (pseudo de l'auteur cité), x (extrait)}
     ttl: int = 0                      # message éphémère : durée de vie en secondes (0 = normal)
+    mentions: list = []               # identifiants des membres cités avec @ (10 au maximum)
+    ouvre_dans: int = 0               # message à ouvrir plus tard : délai en secondes, compté depuis l'heure du relais (0 = lisible tout de suite)
 
 
 class EvenementSalon(BaseModel):
@@ -1969,6 +1971,8 @@ REACTIONS_SALON = ("👍", "❤️", "😂", "😮", "😢", "🎉", "🔥", "�
 JEUX_SALON = {"morpion": 9, "pfc": 0}  # jeu -> nombre de cases (morpion) ; pierre-feuille-ciseaux n'a pas de grille
 ACTIONS_JEU = ("defi", "accepte", "coup", "abandon", "engage", "revele", "forfait")  # « forfait » : pierre-feuille-ciseaux du salon seulement (datée par le relais)
 COUPS_PFC = ("p", "f", "c")  # pierre, feuille, ciseaux
+OUVRE_MIN, OUVRE_MAX = 60, 3 * 86400  # message « à ouvrir plus tard » : de 1 minute à 3 jours (le relais garde les messages 7 jours)
+MAX_MENTIONS = 10
 HEX64, HEX32 = re.compile(r"^[0-9a-f]{64}$"), re.compile(r"^[0-9a-f]{32}$")
 MANCHES_PFC = 10  # manches maximum d'une partie (les égalités se rejouent)
 
@@ -2006,6 +2010,9 @@ def assainir_evenement(k, d):
                 and all(isinstance(x, str) and 1 <= len(x.strip()) <= 80 for x in o)):
             return None
         return {"q": q.strip(), "o": [x.strip() for x in o]}
+    if k == "pin":  # épingler / désépingler un message (le moteur du client vérifie que l'auteur est admin)
+        c = entier(d.get("c"), 1, 10**9)
+        return {"c": c, "on": bool(d.get("on", True))} if c else None
     if k == "vote":
         c, i = entier(d.get("c"), 1, 10**9), entier(d.get("i"), 0, 5)
         return {"c": c, "i": i} if c and i is not None else None
@@ -2059,6 +2066,7 @@ def api_relais_salon(apres: int = 0):
         membres = dict(relais_membres)
         moi = relais_cfg.get("id")
     messages = []
+    horloge = r.get("horloge") if isinstance(r.get("horloge"), (int, float)) else time.time()
     for m in r.get("messages", []):
         if not (isinstance(m, dict) and isinstance(m.get("n"), int) and isinstance(m.get("de"), str)
                 and isinstance(m.get("epoque"), int) and isinstance(m.get("data"), str)):
@@ -2085,6 +2093,20 @@ def api_relais_salon(apres: int = 0):
             if isinstance(rep, dict) and isinstance(rep.get("n"), int):
                 item["rep"] = {"n": rep["n"], "p": nettoyer_pseudo(rep.get("p")) if isinstance(rep.get("p"), str) else "",
                                "x": str(rep.get("x", ""))[:120]}
+            cites = contenu.get("m")
+            if isinstance(cites, list):
+                item["mentions"] = [x for x in cites if isinstance(x, str) and 0 < len(x) <= 64][:MAX_MENTIONS]
+            delai = contenu.get("d")
+            if isinstance(delai, int) and not isinstance(delai, bool) and OUVRE_MIN <= delai <= OUVRE_MAX and "t" in item:
+                # Message à ouvrir plus tard : l'heure d'ouverture est celle du relais (heure de dépôt + délai), jamais l'horloge d'un client.
+                # Tant qu'elle n'est pas venue, le contenu n'est pas transmis à l'interface. Limite : le programme du destinataire a la clé
+                # du salon, un programme modifié pourrait lire le message plus tôt (voir README).
+                item["ouvre"] = item["t"] + delai
+                if item["ouvre"] > horloge:
+                    item["verrou"] = True
+                    item["texte"] = ""
+                    item.pop("rep", None)
+                    item.pop("mentions", None)
         else:
             item["etat"] = "illisible" if contenu is False else ("sans_cle" if coffre_ == "ouvert" else "verrouille")
         if isinstance(m.get("exp"), (int, float)):
@@ -2092,7 +2114,6 @@ def api_relais_salon(apres: int = 0):
         messages.append(item)
     supprimes = [n for n in r.get("supprimes", []) if isinstance(n, int)]
     expires = [n for n in r.get("expires", []) if isinstance(n, int)]
-    horloge = r.get("horloge") if isinstance(r.get("horloge"), (int, float)) else time.time()
     return {"messages": messages, "supprimes": supprimes, "expires": expires, "horloge": horloge, "moi": moi,
             "dernier": r.get("dernier") if isinstance(r.get("dernier"), int) else 0,
             "etat_cle": etat_cle, "cles": connues, "moi_role": relais_info["role"], "epoque": epoque}
@@ -2114,9 +2135,20 @@ def api_relais_salon_envoyer(t: MsgSalonEnvoi):
     if not epoques:
         raise HTTPException(409, "Tu n'as pas encore la clé du salon : un admin doit être connecté avec son coffre ouvert pour te l'envoyer.")
     epoque = epoques[-1]
+    if t.ouvre_dans:
+        if not OUVRE_MIN <= t.ouvre_dans <= OUVRE_MAX:
+            raise HTTPException(400, "Message à ouvrir plus tard : de 1 minute à 3 jours.")
+        if t.ttl:
+            raise HTTPException(400, "Un message ne peut pas être à la fois éphémère et à ouvrir plus tard.")
     with verrou:
         contenu = {"t": texte, "u": mon_profil["pseudo"]}
         moi = relais_cfg["id"]
+        connus = set(relais_membres)
+    if t.ouvre_dans:
+        contenu["d"] = int(t.ouvre_dans)
+    cites = [x for x in dict.fromkeys(t.mentions) if isinstance(x, str) and x in connus][:MAX_MENTIONS]
+    if cites:
+        contenu["m"] = cites
     rep = t.reponse_a
     if isinstance(rep, dict) and isinstance(rep.get("n"), int):
         contenu["r"] = {"n": rep["n"], "p": str(rep.get("p", ""))[:MAX_PSEUDO], "x": str(rep.get("x", ""))[:120]}

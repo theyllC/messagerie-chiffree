@@ -3,7 +3,7 @@ import { api, post, erreur, ok } from "./api.js";
 import { Avatar, Statut } from "./composants.jsx";
 import SalleProf from "./SalleProf.jsx";
 import { CarteMorpion, CartePfc } from "./Jeux.jsx";
-import { DUREES, REACTIONS, deriver } from "./salonEvenements.js";
+import { DELAIS_OUVERTURE, DUREES, REACTIONS, decouperMentions, deriver, estMentionne } from "./salonEvenements.js";
 
 /* Salle de classe : on rejoint un serveur relais avec un code à 6 chiffres. Les messages restent chiffrés de bout en bout,
    le relais ne fait que transporter du chiffré. */
@@ -116,6 +116,9 @@ function Salon({ actif, profils }) {
   const [meta, setMeta] = useState({ etat_cle: "en_attente", moi_role: "eleve", moi: "" });
   const [texte, setTexte] = useState("");
   const [ttl, setTtl] = useState(0);
+  const [ouvreDans, setOuvreDans] = useState(0);        // message « à ouvrir plus tard » : délai en secondes (0 = lisible tout de suite)
+  const [citees, setCitees] = useState(() => new Map());  // id -> pseudo des membres cités avec @ dans le message en cours
+  const [monPseudo, setMonPseudo] = useState("");
   const [outil, setOutil] = useState("");
   const [reponse, setReponse] = useState(null);
   const [statut, setStatut] = useState(null);
@@ -124,6 +127,7 @@ function Salon({ actif, profils }) {
   const [surligne, setSurligne] = useState(null);
   const dernier = useRef(0);
   const version = useRef(null);
+  const verrous = useRef(new Map());  // numéro -> heure d'ouverture (relais) des messages encore verrouillés : on relit tout quand l'un d'eux s'ouvre
   const decalage = useRef(0);  // heure du relais moins heure de ce PC (secondes) : le temps restant des messages éphémères suit l'horloge du relais
   const liste = useRef(null);
   const champ = useRef(null);
@@ -144,6 +148,13 @@ function Salon({ actif, profils }) {
         return;
       }
       version.current = v;
+      for (const m of r.messages) if (m.verrou && typeof m.ouvre === "number") verrous.current.set(m.n, m.ouvre);
+      if ([...verrous.current.values()].some((o) => o <= r.horloge)) {  // un message verrouillé s'ouvre : le relais en donne maintenant le contenu, on relit tout
+        verrous.current.clear();
+        dernier.current = 0;
+        setEvenements([]);
+        return;
+      }
       if (r.messages.length) dernier.current = Math.max(dernier.current, ...r.messages.map((m) => m.n));
       setSupprimes(new Set(r.supprimes));
       setExpires(new Set(r.expires || []));
@@ -163,9 +174,22 @@ function Salon({ actif, profils }) {
     return () => clearInterval(id);
   }, [actif, actualiser]);
 
-  const { fil: filBrut, reactions, sondages, jeux } = useMemo(() => deriver(evenements, supprimes), [evenements, supprimes]);
+  useEffect(() => {
+    if (actif) api("/api/profil").then((p) => setMonPseudo(typeof p?.pseudo === "string" ? p.pseudo : "")).catch(() => {});
+  }, [actif]);
+
+  const { fil: filBrut, reactions, sondages, jeux, epingles } = useMemo(() => deriver(evenements, supprimes), [evenements, supprimes]);
   const aDesEphemeres = evenements.some((m) => m.exp);
-  useSeconde(actif && aDesEphemeres);
+  const aDesVerrous = evenements.some((m) => m.verrou);
+  useSeconde(actif && (aDesEphemeres || aDesVerrous));
+  const maintenant = () => Date.now() / 1000 + decalage.current;
+  const resteOuverture = (m) => (m.verrou && typeof m.ouvre === "number" ? Math.ceil(m.ouvre - maintenant()) : null);
+  const membresCitables = useMemo(() => Object.entries(profils || {})
+    .filter(([cle, p]) => cle.startsWith("relais:") && p?.pseudo)
+    .map(([cle, p]) => ({ id: cle.slice(7), pseudo: p.pseudo, avatar: p.avatar })), [profils]);
+  const pseudosConnus = useMemo(() => [...membresCitables.map((x) => x.pseudo), monPseudo], [membresCitables, monPseudo]);
+  const requete = /(^|\s)@([^\s@]{0,30})$/.exec(texte);  // « @ » en cours de frappe, tout à la fin du texte
+  const suggestions = requete ? membresCitables.filter((x) => x.pseudo.toLowerCase().startsWith(requete[2].toLowerCase())).slice(0, 5) : [];
   const reste = (m) => (m.exp ? Math.ceil(m.exp - (Date.now() / 1000 + decalage.current)) : null);
   // Un message éphémère disparaît dès que son temps est écoulé, sans attendre que le relais l'efface.
   const fil = filBrut.filter((m) => m.supprime || reste(m) === null || reste(m) > 0);
@@ -216,6 +240,15 @@ function Salon({ actif, profils }) {
     }
   }
   const reagir = (c, e, on) => evenement({ k: "rx", c, e, on });
+  const epingler = (c, on) => evenement({ k: "pin", c, on });
+  function citer(membre) {
+    setTexte((t) => t.replace(/(^|\s)@([^\s@]{0,30})$/, `$1@${membre.pseudo} `));
+    setCitees((c) => new Map(c).set(membre.id, membre.pseudo));
+    champ.current?.focus();
+  }
+  function rendreTexte(m) {
+    return decouperMentions(m.texte, pseudosConnus).map((x, i) => (x.mention ? <mark key={i} className="mention">{x.t}</mark> : <span key={i}>{x.t}</span>));
+  }
   const voter = (c, i) => evenement({ k: "vote", c, i });
   const actionJeu = (a) => evenement({ k: "jeu", j: "morpion", ...a }, { suivre: a.a === "defi" });
   async function publierSondage(q, o) {
@@ -230,8 +263,11 @@ function Salon({ actif, profils }) {
     setEnvoi(true);
     setStatut(null);
     try {
-      await post("/api/relais/salon", { texte: t, ttl, reponse_a: reponse ? { n: reponse.n, p: reponse.p === "Moi" ? "" : reponse.p, x: reponse.x } : null });
+      const mentions = [...citees].filter(([, pseudo]) => t.includes(`@${pseudo}`)).map(([id]) => id);  // seulement ceux qui sont toujours dans le texte
+      await post("/api/relais/salon", { texte: t, ttl, ouvre_dans: ouvreDans, mentions, reponse_a: reponse ? { n: reponse.n, p: reponse.p === "Moi" ? "" : reponse.p, x: reponse.x } : null });
       setTexte("");
+      setCitees(new Map());
+      setOuvreDans(0);
       setReponse(null);
       enBas.current = true;
       await actualiser();
@@ -261,6 +297,24 @@ function Salon({ actif, profils }) {
         La clé est renouvelée quand quelqu'un quitte la salle ou en est retiré.
       </p>
       {!pret && <p className="statut info" role="status">{ETATS_CLE[meta.etat_cle]}</p>}
+      {epingles.length > 0 && (
+        <ul className="epingles" aria-label="Messages épinglés">
+          {epingles.map((n) => {
+            const m = filBrut.find((x) => x.n === n);
+            if (!m) return null;
+            return (
+              <li key={n}>
+                <button type="button" className="epingle" onClick={() => aller(n)}>
+                  <span aria-hidden="true">📌</span>
+                  <strong>{m.moi ? "Moi" : nomDe(m)}</strong>
+                  <span className="epingle-texte">{m.k === "poll" ? `Sondage : ${m.q}` : m.verrou ? "🔒 Message verrouillé" : (m.texte || "").replace(/\s+/g, " ").slice(0, 80)}</span>
+                </button>
+                {admin && <button type="button" className="lien" onClick={() => epingler(n, false)} aria-label="Désépingler ce message">✕</button>}
+              </li>
+            );
+          })}
+        </ul>
+      )}
       <ul className="fil-conversation" ref={liste} onScroll={surDefilement} role="log" aria-live="polite" aria-label="Salon de la salle">
         {fil.length === 0 && (
           <li className="etat-vide">
@@ -272,13 +326,16 @@ function Salon({ actif, profils }) {
           const profil = (!m.moi && profils[`relais:${m.de}`]) || m;
           const lisible = m.etat === "ok" && !m.supprime;
           const r = reste(m);
+          const rv = resteOuverture(m);  // secondes avant l'ouverture d'un message verrouillé (null : pas verrouillé)
+          const cite = lisible && !m.moi && estMentionne(m, moi);
           return (
-            <li key={m.n} id={`salon-msg-${m.n}`} className={`bulle ${m.moi ? "envoye" : "recu"}${surligne === m.n ? " surligne" : ""}${m.k === "jeu" || m.k === "poll" ? " large" : ""}`}>
+            <li key={m.n} id={`salon-msg-${m.n}`} className={`bulle ${m.moi ? "envoye" : "recu"}${surligne === m.n ? " surligne" : ""}${m.k === "jeu" || m.k === "poll" ? " large" : ""}${cite ? " mentionne" : ""}${epingles.includes(m.n) ? " epingle-bulle" : ""}`}>
               <span className="bulle-tete">
                 <Avatar profil={profil} nom={m.pseudo} petit />
                 <strong>{m.moi ? "Moi" : nomDe(m)}</strong>
                 <BadgeRole role={m.role} />
                 {lisible && r !== null && <span className="badge ephemere" title="Message éphémère : le relais l'efface à l'échéance">💨 {formatReste(r)}</span>}
+                {cite && <span className="badge mention-toi" title="Ce message te cite">@ toi</span>}
               </span>
               {m.rep && lisible && (
                 <button type="button" className="citation" onClick={() => aller(m.rep.n)} aria-label={`Message cité de ${m.rep.p || "moi"} : ${m.rep.x}`}>
@@ -291,11 +348,15 @@ function Salon({ actif, profils }) {
                 : lisible && m.k === "jeu" ? (m.j === "pfc"
                   ? <CartePfc jeu={jeux.get(m.n)} moi={moi} pret={pret} nom={nomJoueur} portee={`salon-${moi}`} maintenant={() => Date.now() / 1000 + decalage.current} onAction={(a) => actionJeu({ j: "pfc", ...a })} />
                   : <CarteMorpion jeu={jeux.get(m.n)} moi={moi} pret={pret} nom={nomJoueur} onAction={(a) => actionJeu({ j: "morpion", ...a })} />)
-                : lisible ? <p className="texte">{m.texte}</p>
+                : lisible && rv !== null ? <p className="texte verrou">🔒 {rv > 0 ? `Message verrouillé : il s'ouvre dans ${formatReste(rv)}` : "Ouverture du message…"}</p>
+                : lisible ? <p className="texte">{rendreTexte(m)}</p>
                 : <p className="texte chiffre">{NOTE_ILLISIBLE[m.etat] || NOTE_ILLISIBLE.illisible}</p>}
-              {lisible && <Reactions n={m.n} parEmoji={reactions.get(m.n)} moi={moi} pret={pret} onReagir={reagir} />}
+              {lisible && rv === null && <Reactions n={m.n} parEmoji={reactions.get(m.n)} moi={moi} pret={pret} onReagir={reagir} />}
               <span className="meta">
-                {lisible && m.k !== "poll" && m.k !== "jeu" && pret && <button type="button" className="lien" onClick={() => repondre(m)}>Répondre</button>}
+                {lisible && rv === null && m.k !== "poll" && m.k !== "jeu" && pret && <button type="button" className="lien" onClick={() => repondre(m)}>Répondre</button>}
+                {lisible && rv === null && admin && pret && (!m.k || m.k === "msg" || m.k === "poll") && (epingles.includes(m.n)
+                  ? <button type="button" className="lien" onClick={() => epingler(m.n, false)}>Désépingler</button>
+                  : <button type="button" className="lien" onClick={() => epingler(m.n, true)}>📌 Épingler</button>)}
                 {!m.supprime && (m.moi || admin) && (confirmer === m.n ? (
                   <>
                     <button type="button" className="lien danger" onClick={() => supprimer(m.n)}>Supprimer pour tous</button>
@@ -321,11 +382,26 @@ function Salon({ actif, profils }) {
         <button type="button" className="bouton secondaire petit" disabled={!pret} onClick={() => actionJeu({ j: "pfc", a: "defi" })}>✊ Pierre-feuille-ciseaux</button>
         <label className="ephemere-choix">
           <span>💨 Éphémère</span>
-          <select value={ttl} onChange={(e) => setTtl(Number(e.target.value))} aria-label="Durée de vie du prochain message">
+          <select value={ttl} onChange={(e) => { setTtl(Number(e.target.value)); if (e.target.value !== "0") setOuvreDans(0); }} aria-label="Durée de vie du prochain message">
             {DUREES.map((d) => <option key={d.ttl} value={d.ttl}>{d.label}</option>)}
           </select>
         </label>
+        <label className="ephemere-choix">
+          <span>🔒 À ouvrir</span>
+          <select value={ouvreDans} onChange={(e) => { setOuvreDans(Number(e.target.value)); if (e.target.value !== "0") setTtl(0); }} aria-label="Délai avant l'ouverture du prochain message">
+            {DELAIS_OUVERTURE.map((d) => <option key={d.delai} value={d.delai}>{d.label}</option>)}
+          </select>
+        </label>
       </div>
+      {suggestions.length > 0 && (
+        <ul className="suggestions-mention" role="listbox" aria-label="Citer un membre">
+          {suggestions.map((x) => (
+            <li key={x.id} role="option" aria-selected="false">
+              <button type="button" className="lien" onClick={() => citer(x)}>@{x.pseudo}</button>
+            </li>
+          ))}
+        </ul>
+      )}
       <form onSubmit={envoyer} className="salon-saisie">
         <label htmlFor={idTexte} className="sr-only">Message pour la salle</label>
         <textarea id={idTexte} ref={champ} rows={2} value={texte} maxLength={1000} disabled={!pret}

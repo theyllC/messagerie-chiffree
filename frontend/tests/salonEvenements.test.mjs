@@ -1,6 +1,6 @@
 // Lancer : node frontend/tests/salonEvenements.test.mjs
 import assert from "node:assert/strict";
-import { deriver, deriverPrive, gagnantMorpion, engagement } from "../src/salonEvenements.js";
+import { deriver, deriverPrive, gagnantMorpion, engagement, decouperMentions, estMentionne, MAX_EPINGLES } from "../src/salonEvenements.js";
 
 let n = 0;
 const ev = (de, o) => ({ n: ++n, de, pseudo: de.toUpperCase(), ...o });
@@ -318,5 +318,53 @@ t("pfc privé : révélation falsifiée détectée", () => {
   const g = deriverPrive(evs)[0];
   assert.equal(g.motif, "triche");
   assert.equal(g.gagnant, "x");
+});
+
+// ---- Sprint A : épinglage, mentions ----
+const admin = (o) => ({ role: "admin", ...o });
+t("épingler : un admin épingle un message, il est dans la liste", () => {
+  const m = ev("a", { k: "msg", texte: "important" });
+  assert.deepEqual(deriver([m, ev("p", admin({ k: "pin", c: m.n, on: true }))]).epingles, [m.n]);
+});
+t("épingler : un élève ne peut pas épingler (rôle donné par le relais)", () => {
+  const m = ev("a", { k: "msg", texte: "x" });
+  assert.deepEqual(deriver([m, ev("b", { k: "pin", c: m.n, on: true, role: "eleve" }), ev("b", { k: "pin", c: m.n, on: true })]).epingles, []);
+});
+t("épingler : désépingler, et ré-épingler remet en dernier", () => {
+  const a = ev("a", { k: "msg", texte: "1" }), b = ev("a", { k: "msg", texte: "2" });
+  const pin = (m, on) => ev("p", admin({ k: "pin", c: m.n, on }));
+  assert.deepEqual(deriver([a, b, pin(a, true), pin(b, true), pin(a, true)]).epingles, [b.n, a.n]);
+  assert.deepEqual(deriver([a, b, pin(a, true), pin(b, true), pin(a, false)]).epingles, [b.n]);
+});
+t("épingler : au plus " + MAX_EPINGLES + ", le plus ancien se détache", () => {
+  const msgs = Array.from({ length: MAX_EPINGLES + 2 }, (_, i) => ev("a", { k: "msg", texte: String(i) }));
+  const r = deriver([...msgs, ...msgs.map((m) => ev("p", admin({ k: "pin", c: m.n, on: true })))]).epingles;
+  assert.equal(r.length, MAX_EPINGLES);
+  assert.equal(r[0], msgs[2].n);
+});
+t("épingler : cible inconnue, réaction ou message supprimé : ignoré ou détaché", () => {
+  const m = ev("a", { k: "msg", texte: "x" });
+  const rx = ev("a", { k: "rx", c: m.n, e: "👍", on: true });
+  assert.deepEqual(deriver([m, rx, ev("p", admin({ k: "pin", c: rx.n, on: true })), ev("p", admin({ k: "pin", c: 999, on: true }))]).epingles, []);
+  const evs = [m, ev("p", admin({ k: "pin", c: m.n, on: true }))];
+  assert.deepEqual(deriver(evs, new Set([m.n])).epingles, []);
+});
+t("épingler : un sondage peut être épinglé", () => {
+  const p = ev("a", { k: "poll", q: "?", o: ["a", "b"] });
+  assert.deepEqual(deriver([p, ev("p", admin({ k: "pin", c: p.n, on: true }))]).epingles, [p.n]);
+});
+t("mentions : repère @pseudo, le plus long d'abord, sans tomber dans un mot", () => {
+  const r = decouperMentions("salut @Anne-Marie et @anne, mail@anne.fr, @Anneau", ["Anne", "Anne-Marie"]);
+  assert.deepEqual(r.filter((x) => x.mention).map((x) => x.t), ["@Anne-Marie", "@anne"]);
+  assert.equal(r.map((x) => x.t).join(""), "salut @Anne-Marie et @anne, mail@anne.fr, @Anneau");
+});
+t("mentions : texte sans @ ou sans pseudo connu rendu tel quel", () => {
+  assert.deepEqual(decouperMentions("bonjour", ["Zoé"]), [{ t: "bonjour", mention: false }]);
+  assert.deepEqual(decouperMentions("@inconnu", ["Zoé"]), [{ t: "@inconnu", mention: false }]);
+});
+t("mentions : estMentionne se fie à la liste d'identifiants, pas au texte", () => {
+  assert.equal(estMentionne({ mentions: ["moi"], texte: "" }, "moi"), true);
+  assert.equal(estMentionne({ texte: "@moi" }, "moi"), false);
+  assert.equal(estMentionne({ mentions: ["x"] }, ""), false);
 });
 console.log(`\n${ok} tests OK`);
