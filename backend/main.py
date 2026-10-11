@@ -1706,31 +1706,14 @@ ID_PARTIE = re.compile(r"^[0-9a-f]{8}$")
 def assainir_jeu_prive(d):
     """Événement de jeu entre deux contacts, validé champ par champ (à l'envoi ET à la réception), ou None.
     Pas de numéro de relais ici : l'ordre vient de « s » (numéro du coup, morpion) ou de la manche « r » (pierre-feuille-ciseaux)."""
-    if not isinstance(d, dict) or d.get("j") not in JEUX_SALON or d.get("a") not in ACTIONS_JEU:
+    action = assainir_action_jeu(d, prive=True)
+    if action is None:
         return None
-    if d.get("a") == "forfait":
-        return None  # pas de relais pour dater un forfait entre deux contacts : seul « Abandonner » existe dans les parties privées
+    j, a, extra = action
     g = d.get("g")
     if not (isinstance(g, str) and ID_PARTIE.match(g)):
         return None
-    j, a = d["j"], d["a"]
-    ev = {"j": j, "a": a, "g": g}
-    if j == "pfc":
-        extra = champs_pfc(a, d) if a != "coup" else None
-        return {**ev, **extra} if extra is not None else None
-    if a in ("engage", "revele"):
-        return None
-    if a in ("coup", "abandon"):
-        s_ = d.get("s")
-        if not (isinstance(s_, int) and not isinstance(s_, bool) and 0 <= s_ <= JEUX_SALON[j]):
-            return None
-        ev["s"] = s_
-    if a == "coup":
-        i = d.get("i")
-        if not (isinstance(i, int) and not isinstance(i, bool) and 0 <= i < JEUX_SALON[j]):
-            return None
-        ev["i"] = i
-    return ev
+    return {"j": j, "a": a, "g": g, **extra}
 
 
 def evenement_jeu(clair):
@@ -1977,6 +1960,62 @@ HEX64, HEX32 = re.compile(r"^[0-9a-f]{64}$"), re.compile(r"^[0-9a-f]{32}$")
 MANCHES_PFC = 10  # manches maximum d'une partie (les égalités se rejouent)
 
 
+def entier_jeu(v, bas, haut):
+    """Entier (pas un booléen) compris entre bas et haut inclus, sinon None."""
+    return v if isinstance(v, int) and not isinstance(v, bool) and bas <= v <= haut else None
+
+
+def empreinte_valide(h):
+    """Brique d'engagement : une empreinte SHA-256 en hexadécimal (64 caractères minuscules)."""
+    return isinstance(h, str) and bool(HEX64.match(h))
+
+
+def sel_valide(x):
+    """Brique d'engagement : un sel de 128 bits en hexadécimal (32 caractères minuscules)."""
+    return isinstance(x, str) and bool(HEX32.match(x))
+
+
+def champs_morpion(a, d, prive):
+    """Champs d'une action de morpion, ou None si mal formé. Pas d'engagement ni de forfait au morpion.
+    Parties privées : un coup ou un abandon porte son numéro « s » (pas de relais pour ordonner les coups)."""
+    if a not in ("defi", "accepte", "coup", "abandon"):
+        return None
+    extra = {}
+    if prive and a in ("coup", "abandon"):
+        s_ = entier_jeu(d.get("s"), 0, JEUX_SALON["morpion"])
+        if s_ is None:
+            return None
+        extra["s"] = s_
+    if a == "coup":
+        i = entier_jeu(d.get("i"), 0, JEUX_SALON["morpion"] - 1)
+        if i is None:
+            return None
+        extra["i"] = i
+    return extra
+
+
+def champs_jeu_pfc(a, d, prive):
+    return champs_pfc(a, d) if a != "coup" else None  # pas de « coup » : on s'engage puis on révèle
+
+
+CHAMPS_JEU = {"morpion": champs_morpion, "pfc": champs_jeu_pfc}  # registre : jeu -> validation de ses champs. Un nouveau jeu s'ajoute ici et dans JEUX_SALON.
+
+
+def assainir_action_jeu(d, prive):
+    """Cadre commun des jeux (salon et parties privées) : rend (jeu, action, champs propres au jeu) ou None si l'action est mal formée.
+    L'identifiant de la partie (« c » dans le salon, « g » en privé) est vérifié par l'appelant. Pas de forfait en privé :
+    il n'y a pas de relais pour dater un retard entre deux contacts, seul « Abandonner » existe."""
+    if not isinstance(d, dict):
+        return None
+    j, a = d.get("j"), d.get("a")
+    if not (isinstance(j, str) and j in CHAMPS_JEU and a in ACTIONS_JEU):
+        return None
+    if prive and a == "forfait":
+        return None
+    extra = CHAMPS_JEU[j](a, d, prive)
+    return (j, a, extra) if extra is not None else None
+
+
 def champs_pfc(a, d):
     """Champs d'une action de pierre-feuille-ciseaux : « engage » = empreinte SHA-256 du coup caché, « revele » = coup + sel (le sel
     fait que l'empreinte ne se devine pas en essayant les 3 coups). None si mal formé."""
@@ -1987,10 +2026,10 @@ def champs_pfc(a, d):
         return {"r": r}  # le délai se mesure avec l'heure du relais : le moteur compare l'heure du forfait à celle des engagements
     if a == "engage":
         h = d.get("h")
-        return {"r": r, "h": h} if isinstance(h, str) and HEX64.match(h) else None
+        return {"r": r, "h": h} if empreinte_valide(h) else None
     if a == "revele":
         m, x = d.get("m"), d.get("x")
-        return {"r": r, "m": m, "x": x} if m in COUPS_PFC and isinstance(x, str) and HEX32.match(x) else None
+        return {"r": r, "m": m, "x": x} if m in COUPS_PFC and sel_valide(x) else None
     return {}
 
 
@@ -2017,21 +2056,14 @@ def assainir_evenement(k, d):
         c, i = entier(d.get("c"), 1, 10**9), entier(d.get("i"), 0, 5)
         return {"c": c, "i": i} if c and i is not None else None
     if k == "jeu":
-        j, a = d.get("j"), d.get("a")
-        if j not in JEUX_SALON or a not in ACTIONS_JEU:
+        action = assainir_action_jeu(d, prive=False)
+        if action is None:
             return None
+        j, a, extra = action
         if a == "defi":
             return {"j": j, "a": a}
         c = entier(d.get("c"), 1, 10**9)
-        if not c:
-            return None
-        if j == "pfc":
-            extra = champs_pfc(a, d) if a != "coup" else None
-            return {"j": j, "a": a, "c": c, **extra} if extra is not None else None
-        if a == "coup":
-            i = entier(d.get("i"), 0, JEUX_SALON[j] - 1)
-            return {"j": j, "a": a, "c": c, "i": i} if i is not None else None
-        return {"j": j, "a": a, "c": c} if a in ("accepte", "abandon") else None
+        return {"j": j, "a": a, "c": c, **extra} if c else None
     return None
 
 

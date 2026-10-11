@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { api, post, erreur, info } from "./api.js";
 import { Avatar, Coches, Fichier, MAX_FICHIER, envoyerFichier, formatTaille } from "./composants.jsx";
-import { CarteMorpion, CartePfc } from "./Jeux.jsx";
+import { CartePartie } from "./Jeux.jsx";
+import { jeuDefini, listeJeux } from "./jeux/index.js";
 import { deriverPrive } from "./salonEvenements.js";
 
 function PieceJointe({ id, taille }) {
@@ -155,7 +156,7 @@ export default function Conversation({ contacts, profils = {}, monProfil = {}, e
   const nomJoueur = (j) => (j.id === "moi" ? "Toi" : profilContact?.pseudo || contacts[ip] || "Ton contact");
 
   // Ajoute à une action de carte ce que le transport privé attend : le jeu, l'identifiant de la partie, et le numéro du coup (morpion).
-  const actionPrivee = (g, a) => (a.a === "defi" ? { ...a, j: g.j } : { ...a, j: g.j, g: g.n, ...(g.j === "morpion" && (a.a === "coup" || a.a === "abandon") ? { s: g.coups } : {}) });
+  const actionPrivee = (g, a) => (a.a === "defi" ? { ...a, j: g.j } : { ...a, j: g.j, g: g.n, ...jeuDefini(g.j)?.champsPrives(g, a.a) });
 
   async function jouer(a) {
     setStatut(null);
@@ -319,9 +320,7 @@ export default function Conversation({ contacts, profils = {}, monProfil = {}, e
                 <section className="parties-privees parties-zone" aria-label="Parties avec ce contact">
                   {parties.map((g) => (
                     <div key={g.n} className="bulle large partie">
-                      {g.j === "pfc"
-                        ? <CartePfc jeu={g} moi="moi" pret={fil.ouvert} nom={nomJoueur} portee={`prive-${ip}`} onAction={(a) => jouer(actionPrivee(g, a))} />
-                        : <CarteMorpion jeu={g} moi="moi" pret={fil.ouvert} nom={nomJoueur} onAction={(a) => jouer(actionPrivee(g, a))} />}
+                      <CartePartie j={g.j} jeu={g} moi="moi" pret={fil.ouvert} nom={nomJoueur} portee={`prive-${ip}`} onAction={(a) => jouer(actionPrivee(g, a))} />
                     </div>
                   ))}
                 </section>
@@ -353,12 +352,11 @@ export default function Conversation({ contacts, profils = {}, monProfil = {}, e
                             <button type="button" role="menuitem" onClick={() => { setMenuPlus(false); refFichier.current?.click(); }}>
                               <span aria-hidden="true">📎</span><span>Joindre un fichier<small>{formatTaille(MAX_FICHIER)} max, chiffré</small></span>
                             </button>
-                            <button type="button" role="menuitem" disabled={fil.ouvert === false} onClick={() => defier("morpion")}>
-                              <span aria-hidden="true">⭕</span><span>Défier au morpion<small>Partie privée à deux</small></span>
-                            </button>
-                            <button type="button" role="menuitem" disabled={fil.ouvert === false} onClick={() => defier("pfc")}>
-                              <span aria-hidden="true">✊</span><span>Pierre-feuille-ciseaux<small>Partie privée à deux</small></span>
-                            </button>
+                            {listeJeux().map((jeu) => (
+                              <button key={jeu.id} type="button" role="menuitem" disabled={fil.ouvert === false} onClick={() => defier(jeu.id)}>
+                                <span aria-hidden="true">{jeu.icone}</span><span>{jeu.libellePrive}<small>{jeu.sousTitrePrive}</small></span>
+                              </button>
+                            ))}
                           </div>
                         )}
                       </div>

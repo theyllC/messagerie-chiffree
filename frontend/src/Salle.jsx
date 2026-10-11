@@ -2,7 +2,8 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { api, post, erreur, ok } from "./api.js";
 import { Avatar, Statut } from "./composants.jsx";
 import SalleProf from "./SalleProf.jsx";
-import { CarteMorpion, CartePfc } from "./Jeux.jsx";
+import { CartePartie } from "./Jeux.jsx";
+import { listeJeux } from "./jeux/index.js";
 import { DELAIS_OUVERTURE, DUREES, REACTIONS, decouperMentions, deriver, estMentionne } from "./salonEvenements.js";
 
 /* Salle de classe : on rejoint un serveur relais avec un code à 6 chiffres. Les messages restent chiffrés de bout en bout,
@@ -345,9 +346,7 @@ function Salon({ actif, profils }) {
               )}
               {m.supprime ? <p className="texte supprime">{expires.has(m.n) ? "💨 Message éphémère expiré" : "Message supprimé"}</p>
                 : lisible && m.k === "poll" ? <CarteSondage m={m} sondage={sondages.get(m.n)} moi={moi} pret={pret} onVoter={voter} />
-                : lisible && m.k === "jeu" ? (m.j === "pfc"
-                  ? <CartePfc jeu={jeux.get(m.n)} moi={moi} pret={pret} nom={nomJoueur} portee={`salon-${moi}`} maintenant={() => Date.now() / 1000 + decalage.current} onAction={(a) => actionJeu({ j: "pfc", ...a })} />
-                  : <CarteMorpion jeu={jeux.get(m.n)} moi={moi} pret={pret} nom={nomJoueur} onAction={(a) => actionJeu({ j: "morpion", ...a })} />)
+                : lisible && m.k === "jeu" ? <CartePartie j={m.j} jeu={jeux.get(m.n)} moi={moi} pret={pret} nom={nomJoueur} portee={`salon-${moi}`} maintenant={maintenant} onAction={(a) => actionJeu({ j: m.j, ...a })} />
                 : lisible && rv !== null ? <p className="texte verrou">🔒 {rv > 0 ? `Message verrouillé : il s'ouvre dans ${formatReste(rv)}` : "Ouverture du message…"}</p>
                 : lisible ? <p className="texte">{rendreTexte(m)}</p>
                 : <p className="texte chiffre">{NOTE_ILLISIBLE[m.etat] || NOTE_ILLISIBLE.illisible}</p>}
@@ -378,8 +377,9 @@ function Salon({ actif, profils }) {
       {outil === "sondage" && <FormSondage onEnvoyer={publierSondage} onFermer={() => setOutil("")} />}
       <div className="salon-outils" role="group" aria-label="Outils du salon">
         <button type="button" className="bouton secondaire petit" disabled={!pret} onClick={() => setOutil(outil === "sondage" ? "" : "sondage")}>📊 Sondage</button>
-        <button type="button" className="bouton secondaire petit" disabled={!pret} onClick={() => actionJeu({ j: "morpion", a: "defi" })}>⭕ Défi morpion</button>
-        <button type="button" className="bouton secondaire petit" disabled={!pret} onClick={() => actionJeu({ j: "pfc", a: "defi" })}>✊ Pierre-feuille-ciseaux</button>
+        {listeJeux().map((jeu) => (
+          <button key={jeu.id} type="button" className="bouton secondaire petit" disabled={!pret} onClick={() => actionJeu({ j: jeu.id, a: "defi" })}>{jeu.icone} {jeu.libelleSalon}</button>
+        ))}
         <label className="ephemere-choix">
           <span>💨 Éphémère</span>
           <select value={ttl} onChange={(e) => { setTtl(Number(e.target.value)); if (e.target.value !== "0") setOuvreDans(0); }} aria-label="Durée de vie du prochain message">
