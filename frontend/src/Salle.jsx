@@ -377,7 +377,7 @@ function Salon({ actif, profils }) {
       {outil === "sondage" && <FormSondage onEnvoyer={publierSondage} onFermer={() => setOutil("")} />}
       <div className="salon-outils" role="group" aria-label="Outils du salon">
         <button type="button" className="bouton secondaire petit" disabled={!pret} onClick={() => setOutil(outil === "sondage" ? "" : "sondage")}>📊 Sondage</button>
-        {listeJeux().map((jeu) => (
+        {listeJeux().filter((jeu) => jeu.salon).map((jeu) => (
           <button key={jeu.id} type="button" className="bouton secondaire petit" disabled={!pret} onClick={() => actionJeu({ j: jeu.id, a: "defi" })}>{jeu.icone} {jeu.libelleSalon}</button>
         ))}
         <label className="ephemere-choix">

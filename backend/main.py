@@ -1752,6 +1752,7 @@ class JeuPrive(BaseModel):
     h: str = ""
     m: str = ""
     x: str = ""
+    f: str = ""
 
 
 @app.post("/api/conversation/jeu")
@@ -1759,7 +1760,7 @@ def api_conversation_jeu(t: JeuPrive):
     """Défi, acceptation, coup, engagement, révélation ou abandon envoyé à UN contact : message v2 chiffré avec la clé échangée, rien ne passe par un relais de jeu."""
     ip = t.ip.strip()
     g = t.g if t.a != "defi" else secrets.token_hex(4)
-    ev = assainir_jeu_prive({"j": t.j, "a": t.a, "g": g, "i": t.i, "s": t.s, "r": t.r, "h": t.h, "m": t.m, "x": t.x})
+    ev = assainir_jeu_prive({"j": t.j, "a": t.a, "g": g, "i": t.i, "s": t.s, "r": t.r, "h": t.h, "m": t.m, "x": t.x, "f": t.f})
     if ev is None:
         raise HTTPException(400, "Événement de jeu invalide.")
     with verrou:
@@ -1936,8 +1937,9 @@ class EvenementSalon(BaseModel):
     a: str = ""                       # action de jeu : defi, accepte, coup, abandon, engage, revele
     r: Optional[int] = None           # manche (pierre-feuille-ciseaux)
     h: str = ""                       # engagement : SHA-256 du coup caché
-    m: str = ""                       # coup révélé (p, f, c)
+    m: str = ""                       # coup révélé (p, f, c) ; bataille navale : lettre du navire touché
     x: str = ""                       # sel révélé
+    f: str = ""                       # bataille navale : flotte révélée en fin de partie (64 caractères)
     ttl: int = 0
 
 
@@ -1951,8 +1953,12 @@ class CibleMembreSalon(BaseModel):
 
 
 REACTIONS_SALON = ("👍", "❤️", "😂", "😮", "😢", "🎉", "🔥", "👀")
-JEUX_SALON = {"morpion": 9, "pfc": 0}  # jeu -> nombre de cases (morpion) ; pierre-feuille-ciseaux n'a pas de grille
-ACTIONS_JEU = ("defi", "accepte", "coup", "abandon", "engage", "revele", "forfait")  # « forfait » : pierre-feuille-ciseaux du salon seulement (datée par le relais)
+JEUX_SALON = {"morpion": 9, "pfc": 0, "p4": 42, "bn": 64}  # jeu -> nombre de cases de la grille (pierre-feuille-ciseaux n'en a pas)
+ACTIONS_JEU = ("defi", "accepte", "coup", "abandon", "engage", "revele", "forfait", "tir", "reponse")  # « forfait » : salon seulement (daté par le relais) ; « tir » et « reponse » : bataille navale
+P4_COLONNES = 7
+BN_CASES, BN_NAVIRES = 64, "abcde"  # bataille navale : grille 8 x 8, cinq navires (4, 3, 3, 2, 2 cases) repérés par une lettre
+BN_FLOTTE = re.compile(r"^[.a-e]{64}$")
+JEUX_PRIVES = ("bn",)  # réservés aux parties privées : une bataille navale fait 100 à 250 événements, or le relais ne garde que MAX_SALON événements et n'en rend que LOT_SALON à une page rechargée
 COUPS_PFC = ("p", "f", "c")  # pierre, feuille, ciseaux
 OUVRE_MIN, OUVRE_MAX = 60, 3 * 86400  # message « à ouvrir plus tard » : de 1 minute à 3 jours (le relais garde les messages 7 jours)
 MAX_MENTIONS = 10
@@ -1975,30 +1981,85 @@ def sel_valide(x):
     return isinstance(x, str) and bool(HEX32.match(x))
 
 
-def champs_morpion(a, d, prive):
-    """Champs d'une action de morpion, ou None si mal formé. Pas d'engagement ni de forfait au morpion.
-    Parties privées : un coup ou un abandon porte son numéro « s » (pas de relais pour ordonner les coups)."""
+def champs_tour_par_tour(a, d, prive, choix, max_coups):
+    """Jeux où chacun joue un coup à son tour, sans information cachée (morpion, Puissance 4) : « coup » porte un choix i (case ou colonne)
+    entre 0 et choix - 1. Pas d'engagement ni de forfait. Parties privées : un coup ou un abandon porte son numéro « s » (de 0 à max_coups) :
+    sans relais pour les ordonner, c'est lui qui remet les coups dans l'ordre."""
     if a not in ("defi", "accepte", "coup", "abandon"):
         return None
     extra = {}
     if prive and a in ("coup", "abandon"):
-        s_ = entier_jeu(d.get("s"), 0, JEUX_SALON["morpion"])
+        s_ = entier_jeu(d.get("s"), 0, max_coups)
         if s_ is None:
             return None
         extra["s"] = s_
     if a == "coup":
-        i = entier_jeu(d.get("i"), 0, JEUX_SALON["morpion"] - 1)
+        i = entier_jeu(d.get("i"), 0, choix - 1)
         if i is None:
             return None
         extra["i"] = i
     return extra
 
 
+def champs_morpion(a, d, prive):
+    return champs_tour_par_tour(a, d, prive, JEUX_SALON["morpion"], JEUX_SALON["morpion"])
+
+
+def champs_p4(a, d, prive):
+    return champs_tour_par_tour(a, d, prive, P4_COLONNES, JEUX_SALON["p4"])
+
+
 def champs_jeu_pfc(a, d, prive):
-    return champs_pfc(a, d) if a != "coup" else None  # pas de « coup » : on s'engage puis on révèle
+    if a not in ("defi", "accepte", "abandon", "engage", "revele", "forfait"):
+        return None  # pas de « coup » : on s'engage puis on révèle
+    return champs_pfc(a, d)
 
 
-CHAMPS_JEU = {"morpion": champs_morpion, "pfc": champs_jeu_pfc}  # registre : jeu -> validation de ses champs. Un nouveau jeu s'ajoute ici et dans JEUX_SALON.
+def champs_bn(a, d, prive):
+    """Bataille navale. Chacun s'engage sur sa flotte (« engage » : empreinte SHA-256 de partie | côté | flotte | sel), puis tire à son tour
+    (« tir » : case i) ; l'adversaire répond « reponse » (r = 1 touché + m = lettre du navire, r = 0 à l'eau) ; la partie finie, les deux
+    révèlent leur flotte et leur sel (« revele ») : chacun peut vérifier que l'autre n'a pas menti. Parties privées : tir, réponse et
+    abandon portent leur numéro « s » (nombre de tirs lancés avant) pour se remettre dans l'ordre sans relais."""
+    maxi_tirs = 2 * BN_CASES
+    if a in ("defi", "accepte"):
+        return {}
+    if a == "forfait":
+        return {}
+    extra = {}
+    if prive and a in ("tir", "reponse", "abandon"):
+        s_ = entier_jeu(d.get("s"), 0, maxi_tirs)
+        if s_ is None:
+            return None
+        extra["s"] = s_
+    if a == "abandon":
+        return extra
+    if a == "engage":
+        h = d.get("h")
+        return {"h": h} if empreinte_valide(h) else None
+    if a == "revele":
+        f, x = d.get("f"), d.get("x")
+        return {"f": f, "x": x} if isinstance(f, str) and BN_FLOTTE.match(f) and sel_valide(x) else None
+    if a in ("tir", "reponse"):
+        i = entier_jeu(d.get("i"), 0, BN_CASES - 1)
+        if i is None:
+            return None
+        extra["i"] = i
+        if a == "reponse":
+            r, m = entier_jeu(d.get("r"), 0, 1), d.get("m")
+            if r is None:
+                return None
+            extra["r"] = r
+            if r == 1:
+                if not (isinstance(m, str) and len(m) == 1 and m in BN_NAVIRES):
+                    return None
+                extra["m"] = m
+            elif m not in (None, ""):
+                return None
+        return extra
+    return None
+
+
+CHAMPS_JEU = {"morpion": champs_morpion, "pfc": champs_jeu_pfc, "p4": champs_p4, "bn": champs_bn}  # registre : jeu -> validation de ses champs. Un nouveau jeu s'ajoute ici et dans JEUX_SALON.
 
 
 def assainir_action_jeu(d, prive):
@@ -2011,6 +2072,8 @@ def assainir_action_jeu(d, prive):
     if not (isinstance(j, str) and j in CHAMPS_JEU and a in ACTIONS_JEU):
         return None
     if prive and a == "forfait":
+        return None
+    if not prive and j in JEUX_PRIVES:
         return None
     extra = CHAMPS_JEU[j](a, d, prive)
     return (j, a, extra) if extra is not None else None

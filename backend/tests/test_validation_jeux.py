@@ -30,10 +30,10 @@ prive = lambda **d: main.assainir_jeu_prive(d)
 pieges = [None, True, 1.5, [], [1], {}, {"a": 1}, "", "x" * 500, -1, 10**30]
 exceptions = 0
 for v in pieges:
-    for champ in ("j", "a", "c", "g", "i", "s", "r", "h", "m", "x"):
-        base = {"j": "morpion", "a": "coup", "c": 1, "g": G, "i": 0, "s": 0, "r": 0, "h": H, "m": "p", "x": X}
-        for jeu in ("morpion", "pfc"):
-            for action in ("defi", "accepte", "coup", "abandon", "engage", "revele", "forfait"):
+    for champ in ("j", "a", "c", "g", "i", "s", "r", "h", "m", "x", "f"):
+        base = {"j": "morpion", "a": "coup", "c": 1, "g": G, "i": 0, "s": 0, "r": 0, "h": H, "m": "p", "x": X, "f": "." * 64}
+        for jeu in ("morpion", "pfc", "p4", "bn"):
+            for action in ("defi", "accepte", "coup", "abandon", "engage", "revele", "forfait", "tir", "reponse"):
                 d = {**base, "j": jeu, "a": action, champ: v}
                 for f in (lambda: main.assainir_evenement("jeu", d), lambda: main.assainir_jeu_prive(d)):
                     try:
@@ -76,10 +76,38 @@ check("privé pfc : engagement et révélation valides", prive(j="pfc", a="engag
 check("privé pfc : pas de numéro de coup, pas de « coup »", prive(j="pfc", a="coup", g=G, s=0, i=0) is None)
 check("privé : le JSON envoyé garde l'ordre j, a, g, puis les champs du jeu", json.dumps(prive(j="morpion", a="coup", g=G, s=3, i=4)) == '{"j": "morpion", "a": "coup", "g": "abcd1234", "s": 3, "i": 4}')
 
+# ---- Puissance 4
+check("salon p4 : coup dans une colonne de 0 à 6", salon(j="p4", a="coup", c=5, i=6) == {"j": "p4", "a": "coup", "c": 5, "i": 6} and salon(j="p4", a="coup", c=5, i=0) is not None)
+check("salon p4 : colonne hors plateau ou absente refusée", all(salon(j="p4", a="coup", c=5, **k) is None for k in ({"i": 7}, {"i": -1}, {}, {"i": 2.5}, {"i": True})))
+check("salon p4 : défi, acceptation, abandon", salon(j="p4", a="defi") == {"j": "p4", "a": "defi"} and salon(j="p4", a="accepte", c=5) is not None and salon(j="p4", a="abandon", c=5) is not None)
+check("p4 : pas d'engagement, de révélation, de forfait, de tir ni de réponse", all(salon(j="p4", a=a, c=5, r=0, h=H, m="p", x=X, i=0) is None for a in ("engage", "revele", "forfait", "tir", "reponse")))
+check("privé p4 : coup numéroté de 0 à 42", prive(j="p4", a="coup", g=G, s=42, i=3) == {"j": "p4", "a": "coup", "g": G, "s": 42, "i": 3} and prive(j="p4", a="coup", g=G, s=43, i=3) is None and prive(j="p4", a="coup", g=G, i=3) is None)
+check("privé p4 : abandon avec son numéro", prive(j="p4", a="abandon", g=G, s=5) is not None and prive(j="p4", a="abandon", g=G) is None)
+
+# ---- bataille navale : parties privées seulement
+FLOTTE = "aaaa....bbb....." + "." * 48
+check("bataille navale : refusée au salon (trop d'événements pour le relais)", all(salon(j="bn", a=a, c=5, i=0, r=0, h=H, f=FLOTTE, x=X) is None for a in ("defi", "accepte", "tir", "reponse", "engage", "revele", "abandon", "forfait")))
+check("privé bn : défi et acceptation", prive(j="bn", a="defi", g=G) == {"j": "bn", "a": "defi", "g": G} and prive(j="bn", a="accepte", g=G) is not None)
+check("privé bn : engagement = empreinte SHA-256 valide", prive(j="bn", a="engage", g=G, h=H) == {"j": "bn", "a": "engage", "g": G, "h": H} and all(prive(j="bn", a="engage", g=G, h=h) is None for h in ("", "Z" * 64, H.upper(), None)))
+check("privé bn : tir numéroté sur une case de 0 à 63", prive(j="bn", a="tir", g=G, s=0, i=63) == {"j": "bn", "a": "tir", "g": G, "s": 0, "i": 63})
+check("privé bn : tir sans numéro, case hors grille ou numéro hors limite refusés", all(prive(j="bn", a="tir", g=G, **k) is None for k in ({"i": 3}, {"s": 0, "i": 64}, {"s": 0, "i": -1}, {"s": 129, "i": 3}, {"s": -1, "i": 3}, {"s": 0})))
+check("privé bn : réponse « à l'eau »", prive(j="bn", a="reponse", g=G, s=4, i=9, r=0) == {"j": "bn", "a": "reponse", "g": G, "s": 4, "i": 9, "r": 0})
+check("privé bn : réponse « touché » avec la lettre du navire", prive(j="bn", a="reponse", g=G, s=4, i=9, r=1, m="c") == {"j": "bn", "a": "reponse", "g": G, "s": 4, "i": 9, "r": 1, "m": "c"})
+check("privé bn : réponses mal formées refusées", all(prive(j="bn", a="reponse", g=G, s=4, i=9, **k) is None for k in (
+    {"r": 1}, {"r": 1, "m": "f"}, {"r": 1, "m": "ab"}, {"r": 1, "m": ""}, {"r": 0, "m": "a"}, {"r": 2}, {"r": True, "m": "a"}, {}, {"r": 1, "m": ["a"]})))
+check("privé bn : révélation de flotte (64 caractères) et sel", prive(j="bn", a="revele", g=G, f=FLOTTE, x=X) == {"j": "bn", "a": "revele", "g": G, "f": FLOTTE, "x": X})
+check("privé bn : flotte ou sel mal formés refusés", all(prive(j="bn", a="revele", g=G, **k) is None for k in (
+    {"f": FLOTTE[:63], "x": X}, {"f": FLOTTE + "a", "x": X}, {"f": "z" * 64, "x": X}, {"f": FLOTTE.upper(), "x": X}, {"f": FLOTTE, "x": "12"}, {"f": FLOTTE}, {"x": X}, {"f": 5, "x": X})))
+check("privé bn : abandon avec son numéro, jamais de forfait", prive(j="bn", a="abandon", g=G, s=3) == {"j": "bn", "a": "abandon", "g": G, "s": 3} and prive(j="bn", a="abandon", g=G) is None and prive(j="bn", a="forfait", g=G) is None)
+check("privé bn : le coup de morpion ou de pfc n'existe pas ici", all(prive(j="bn", a=a, g=G, s=0, i=0, r=0, h=H, m="p", x=X) is None for a in ("coup", "triche")))
+check("privé : tir et réponse n'existent pas pour les autres jeux", all(prive(j=j, a=a, g=G, s=0, i=0, r=0, m="a") is None for j in ("morpion", "pfc", "p4") for a in ("tir", "reponse")))
+check("privé bn : le JSON envoyé garde l'ordre j, a, g, s, i, r, m", json.dumps(prive(j="bn", a="reponse", g=G, s=4, i=9, r=1, m="c")) == '{"j": "bn", "a": "reponse", "g": "abcd1234", "s": 4, "i": 9, "r": 1, "m": "c"}')
+
 # ---- brique d'engagement et registre
 check("brique : empreinte_valide (64 hexa minuscules)", main.empreinte_valide(H) and not main.empreinte_valide(H.upper()) and not main.empreinte_valide(None) and not main.empreinte_valide("ab" * 31))
 check("brique : sel_valide (32 hexa minuscules)", main.sel_valide(X) and not main.sel_valide("cd" * 15) and not main.sel_valide(12) and not main.sel_valide(X.upper()))
-check("registre : chaque jeu a sa validation et sa grille", set(main.CHAMPS_JEU) == set(main.JEUX_SALON) == {"morpion", "pfc"})
+check("registre : chaque jeu a sa validation et sa grille", set(main.CHAMPS_JEU) == set(main.JEUX_SALON) == {"morpion", "pfc", "p4", "bn"})
+check("registre : seule la bataille navale est réservée aux parties privées", main.JEUX_PRIVES == ("bn",))
 
 print("\nTOUT EST OK" if ok_global else "\nIL Y A DES ECHECS")
 sys.exit(0 if ok_global else 1)

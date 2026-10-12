@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { cleSecret, ecrireSecret, empreinte, lireSecret, selAleatoire } from "./engagement.js";
-import { COUPS_PFC, DELAI_FORFAIT, MANCHES_GAGNANTES, champsEngagementPfc, departForfait } from "./jeux/index.js";
+import {
+  CASES_BN, COLONNES_P4, COUPS_PFC, DELAI_FORFAIT, LIGNES_P4, MANCHES_GAGNANTES, NAVIRES_BN, TAILLE_BN,
+  caseDeChute, champsEngagementPfc, departForfait, departForfaitBn, flotteAleatoire, flotteValide, naviresCoules, reponsesDe,
+} from "./jeux/index.js";
 
 /* Cartes de jeu partagées : salon de la salle et conversations privées. Elles ne connaissent pas le transport :
    elles affichent une partie (voir jeux/ et salonEvenements.js) et rendent les actions choisies via onAction.
@@ -52,6 +55,19 @@ export function useRevelationAuto(cle, envoyer) {
   });
 }
 
+/* Décompte du forfait : secondes restantes avant que l'adversaire en retard puisse être déclaré forfait (négatif ou nul : réclamable), ou null s'il
+   n'y a pas de retard. depart : heure du relais depuis laquelle l'adversaire est en retard ; maintenant() : heure du relais « maintenant ».
+   Se réaffiche chaque seconde tant qu'un retard est en cours. */
+export function useDecompteForfait(depart, maintenant) {
+  const [, setTic] = useState(0);
+  useEffect(() => {
+    if (depart === null) return undefined;
+    const id = setInterval(() => setTic((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [depart]);
+  return depart === null || !maintenant ? null : Math.ceil(depart + DELAI_FORFAIT - maintenant());
+}
+
 const joueursDe = (jeu, nom) => ({ x: nom(jeu.x), o: jeu.o ? nom(jeu.o) : null });
 const marqueDe = (jeu, moi) => (jeu.x.id === moi ? "x" : jeu.o && jeu.o.id === moi ? "o" : null);
 
@@ -93,13 +109,7 @@ export function CartePfc({ jeu, moi, pret, nom, onAction, portee, maintenant }) 
   const autreCote = monMarque ? ronde[monMarque === "x" ? "o" : "x"] : {};
   const secret = jeu && monMarque ? secretPfc(portee, jeu.n, jeu.manche) : null;
   const depart = jeu && monMarque && maintenant ? departForfait(jeu, monMarque) : null;
-  const [, setTic] = useState(0);
-  useEffect(() => {  // décompte du délai : on se réaffiche chaque seconde tant qu'un forfait peut être réclamé
-    if (depart === null) return undefined;
-    const id = setInterval(() => setTic((t) => t + 1), 1000);
-    return () => clearInterval(id);
-  }, [depart]);
-  const resteForfait = depart === null ? null : Math.ceil(depart + DELAI_FORFAIT - maintenant());
+  const resteForfait = useDecompteForfait(depart, maintenant);
 
   // Révélation automatique : dès que les deux empreintes sont publiées, je révèle mon coup et mon sel.
   const doitReveler = jeu && jeu.etat === "en_cours" && pret && monMarque && moiCote.h && autreCote.h && !moiCote.m && secret && secret.h === moiCote.h;
@@ -167,9 +177,175 @@ export function CartePfc({ jeu, moi, pret, nom, onAction, portee, maintenant }) 
   );
 }
 
+/* --- Puissance 4 ---------------------------------------------------------------------------------------------------------------
+   Plateau de 7 colonnes sur 6 lignes : on choisit une colonne, le jeton tombe tout en bas. Chaque colonne est un seul bouton. */
+export function CartePuissance4({ jeu, moi, pret, nom, onAction }) {
+  if (!jeu) return <p className="texte supprime">Partie introuvable.</p>;
+  const noms = joueursDe(jeu, nom);
+  const monMarque = marqueDe(jeu, moi);
+  const monTour = jeu.etat === "en_cours" && monMarque === jeu.tour;
+  const titre = titrePartie(jeu, noms, monTour ? "À toi de jouer !" : `Tour de ${noms[jeu.tour]}`);
+  const gagnantes = new Set(jeu.ligne || []);
+  return (
+    <CadreJeu jeu={jeu} moi={moi} pret={pret} noms={noms} onAction={onAction} classe="p4" icone="🔴" nom="Puissance 4" marques={{ x: "rouge", o: "jaune" }} titre={titre}>
+      <div className="p4-plateau" role="group" aria-label="Plateau de Puissance 4">
+        {Array.from({ length: COLONNES_P4 }, (_, c) => (
+          <button key={c} type="button" className="p4-colonne" disabled={!pret || !monTour || caseDeChute(jeu.cases, c) < 0}
+                  onClick={() => onAction({ a: "coup", c: jeu.n, i: c })} aria-label={`Colonne ${c + 1}${caseDeChute(jeu.cases, c) < 0 ? " (pleine)" : ""}`}>
+            {Array.from({ length: LIGNES_P4 }, (_, l) => {
+              const i = l * COLONNES_P4 + c;
+              const v = jeu.cases[i];
+              return <span key={l} className={`p4-disque${v ? ` ${v}` : ""}${gagnantes.has(i) ? " gagnant" : ""}${jeu.dernier === i ? " dernier" : ""}`} aria-hidden="true">{v === "x" ? "✕" : v === "o" ? "◯" : ""}</span>;
+            })}
+          </button>
+        ))}
+      </div>
+    </CadreJeu>
+  );
+}
+
+/* --- Bataille navale avec flotte engagée -----------------------------------------------------------------------------------------
+   Ma flotte et mon sel restent dans CE navigateur (comme le coup du pierre-feuille-ciseaux) : seule l'empreinte SHA-256 est publiée avant la partie.
+   Mon navigateur répond tout seul aux tirs de l'adversaire à partir de ma flotte secrète, puis la révèle à la fin pour la vérification. */
+const cleBn = (portee, partie) => cleSecret("bn", portee, partie);
+const secretBn = (portee, partie) => lireSecret(cleBn(portee, partie), (v) => flotteValide(v.m));
+const coordonnee = (i) => `${String.fromCharCode(65 + (i % TAILLE_BN))}${Math.floor(i / TAILLE_BN) + 1}`;
+
+function GrilleBn({ legende, cellule, onCase }) {
+  return (
+    <div className="bn-bloc">
+      <p className="note">{legende}</p>
+      <div className="grille-bn" role="grid" aria-label={legende}>
+        {Array.from({ length: CASES_BN }, (_, i) => {
+          const c = cellule(i);
+          return (
+            <button key={i} type="button" role="gridcell" className={`case-bn ${c.classe}`} disabled={!c.actif} onClick={() => onCase(i)}
+                    aria-label={`${legende}, ${coordonnee(i)} : ${c.label}`}>{c.glyphe}</button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export function CarteBatailleNavale({ jeu, moi, pret, nom, onAction, portee, maintenant }) {
+  const [apercu, setApercu] = useState(() => flotteAleatoire());  // flotte proposée tant que je ne l'ai pas verrouillée
+  const [probleme, setProbleme] = useState(null);
+  const monMarque = jeu && marqueDe(jeu, moi);
+  const autre = monMarque === "x" ? "o" : "x";
+  const secret = jeu && monMarque ? secretBn(portee, jeu.n) : null;
+  const monEngagement = jeu && monMarque ? jeu.engages[monMarque] : null;
+  const secretOk = Boolean(secret && monEngagement && secret.h === monEngagement);
+  const depart = jeu && monMarque && maintenant ? departForfaitBn(jeu, monMarque) : null;
+  const resteForfait = useDecompteForfait(depart, maintenant);
+
+  // Réponse automatique au tir de l'adversaire : touché (avec la lettre du navire) ou à l'eau, calculé depuis ma flotte secrète.
+  const doitRepondre = jeu && jeu.etat === "en_cours" && jeu.phase === "tir" && jeu.attente && monMarque && jeu.attente.par !== monMarque && secretOk && pret;
+  useRevelationAuto(doitRepondre ? `${jeu.n}:rep:${jeu.attente.s}` : null, () => {
+    const cellule = secret.m[jeu.attente.i];
+    onAction({ a: "reponse", c: jeu.n, i: jeu.attente.i, r: cellule === "." ? 0 : 1, ...(cellule === "." ? {} : { m: cellule }) });
+  });
+  // Vérification : quand toutes les cases d'une flotte sont touchées, chacun révèle sa flotte et son sel.
+  const doitReveler = jeu && jeu.etat === "en_cours" && jeu.phase === "revelation" && monMarque && !jeu.reveles[monMarque] && secretOk && pret;
+  useRevelationAuto(doitReveler ? `${jeu.n}:rev` : null, () => onAction({ a: "revele", c: jeu.n, f: secret.m, x: secret.x }));
+
+  if (!jeu) return <p className="texte supprime">Partie introuvable.</p>;
+  const noms = joueursDe(jeu, nom);
+
+  function verrouiller() {
+    let s = secret;  // déjà tirée lors d'une tentative précédente (l'engagement s'est perdu en route) : on la renvoie telle quelle
+    if (!s) {
+      const sel = selAleatoire();
+      s = { m: apercu, x: sel, h: empreinte([jeu.n, monMarque, apercu], sel) };
+      if (!ecrireSecret(cleBn(portee, jeu.n), s)) {
+        setProbleme("Le stockage du navigateur est indisponible : ta flotte secrète ne pourrait pas être conservée jusqu'à la vérification.");
+        return;
+      }
+    }
+    setProbleme(null);
+    onAction({ a: "engage", c: jeu.n, h: s.h });
+  }
+
+  const adversaireNom = noms[autre];
+  const maFlotte = monMarque ? (secret ? secret.m : !monEngagement ? apercu : null) : null;
+  const recus = new Map(reponsesDe(jeu, monMarque || "x").map((t) => [t.i, t]));
+  const mesTirs = new Map(jeu.tirs.filter((t) => t.par === monMarque).map((t) => [t.i, t]));
+  const subiAttente = jeu.attente && jeu.attente.par === autre ? jeu.attente.i : null;
+  const tireAttente = jeu.attente && jeu.attente.par === monMarque ? jeu.attente.i : null;
+  const flotteAdverse = monMarque ? jeu.reveles[autre] : null;  // révélée en fin de partie
+  const peutTirer = jeu.etat === "en_cours" && jeu.phase === "tir" && jeu.tour === monMarque && !jeu.attente && pret;
+
+  let enCours;
+  if (!monMarque) enCours = jeu.phase === "placement" ? "Les joueurs placent leur flotte…" : jeu.phase === "tir" ? "Bataille en cours" : "Vérification des flottes…";
+  else if (jeu.phase === "placement") enCours = !monEngagement ? "Place ta flotte (mélange-la si tu veux), puis verrouille-la : seule son empreinte est publiée." : `Flotte verrouillée. En attente de ${adversaireNom}…`;
+  else if (jeu.phase === "revelation") enCours = "Une flotte est entièrement touchée : chacun révèle sa flotte pour que tout soit vérifié…";
+  else if (jeu.attente) enCours = jeu.attente.par === monMarque ? `Tir en ${coordonnee(jeu.attente.i)} : en attente de la réponse de ${adversaireNom}…` : `${adversaireNom} tire en ${coordonnee(jeu.attente.i)} : réponse automatique…`;
+  else enCours = jeu.tour === monMarque ? "À toi de tirer !" : `Tour de ${noms[jeu.tour]}`;
+  const titre = titrePartie(jeu, noms, enCours, (g, n) => {
+    const perdant = g.gagnant === "x" ? "o" : "x";
+    if (g.motif === "forfait") return `${n[perdant]} n'a pas joué à temps (plus de ${DELAI_FORFAIT} s) : ${n[g.gagnant]} gagne par forfait.`;
+    if (g.motif === "triche") return `${n[g.fraudeur || perdant]} a triché : ses réponses ne correspondaient pas à sa flotte engagée. ${n[g.gagnant]} gagne.`;
+    if (g.motif === "coule") return `${n[g.gagnant]} a coulé toute la flotte de ${n[perdant]} !`;
+    return null;
+  });
+
+  const entete = jeu.etat !== "attente" && jeu.phase !== "placement" && (
+    <p className="pfc-score" aria-label="Navires coulés">
+      {noms.x} a coulé {naviresCoules(jeu, "o").length}/{Object.keys(NAVIRES_BN).length} · {noms.o} a coulé {naviresCoules(jeu, "x").length}/{Object.keys(NAVIRES_BN).length}
+      {jeu.etat === "fini" && jeu.motif === "coule" && <span className="badge sur" title="Chaque flotte révélée correspond à son empreinte SHA-256 et à toutes les réponses données">flottes vérifiées ✔</span>}
+    </p>
+  );
+  const actionsJeu = (
+    <>
+      {resteForfait !== null && resteForfait > 0 && <span className="note">Si {adversaireNom} tarde trop, forfait réclamable dans {resteForfait} s.</span>}
+      {resteForfait !== null && resteForfait <= 0 && <button type="button" className="bouton petit" disabled={!pret} onClick={() => onAction({ a: "forfait", c: jeu.n })}>Réclamer le forfait de {adversaireNom}</button>}
+    </>
+  );
+  const secretPerdu = jeu.etat === "en_cours" && monMarque && monEngagement && !secretOk;
+  return (
+    <CadreJeu jeu={jeu} moi={moi} pret={pret} noms={noms} onAction={onAction} classe="bn" icone="🚢" nom="Bataille navale" titre={titre} entete={entete} actionsJeu={actionsJeu}>
+      {secretPerdu && <p className="statut erreur" role="status">Ta flotte secrète est introuvable sur ce navigateur (stockage effacé ?) : tu ne peux plus répondre aux tirs. Abandonne la partie.</p>}
+      {probleme && <p className="statut erreur" role="status">{probleme}</p>}
+      {jeu.etat !== "attente" && monMarque && (
+        <div className="bn-grilles">
+          <GrilleBn legende="Ma flotte" onCase={() => {}} cellule={(i) => {
+            const navire = maFlotte && maFlotte[i] !== ".";
+            const t = recus.get(i);
+            return {
+              classe: [navire ? "navire" : "", t ? (t.r ? "touche" : "rate") : subiAttente === i ? "attente" : ""].join(" "),
+              glyphe: t ? (t.r ? "✕" : "•") : subiAttente === i ? "…" : "",
+              label: `${navire ? "navire" : "eau"}${t ? (t.r ? ", touché" : ", tir raté") : subiAttente === i ? ", tir en cours" : ""}`,
+              actif: false,
+            };
+          }} />
+          {jeu.phase !== "placement" && (
+            <GrilleBn legende={`Flotte de ${adversaireNom}`} onCase={(i) => onAction({ a: "tir", c: jeu.n, i })} cellule={(i) => {
+              const t = mesTirs.get(i);
+              const revelee = flotteAdverse && flotteAdverse[i] !== ".";
+              return {
+                classe: t ? (t.r ? "touche" : "rate") : tireAttente === i ? "attente" : revelee ? "revelee" : "",
+                glyphe: t ? (t.r ? "✕" : "•") : tireAttente === i ? "…" : "",
+                label: t ? (t.r ? "touché" : "à l'eau") : tireAttente === i ? "tir en cours" : revelee ? "navire révélé" : "pas encore visée",
+                actif: peutTirer && !t,
+              };
+            }} />
+          )}
+        </div>
+      )}
+      {jeu.etat === "en_cours" && monMarque && jeu.phase === "placement" && !monEngagement && (
+        <div className="morpion-actions">
+          <button type="button" className="bouton petit" disabled={!pret} onClick={verrouiller}>{secret ? "Renvoyer l'engagement" : "Verrouiller ma flotte"}</button>
+          {!secret && <button type="button" className="bouton secondaire petit" onClick={() => setApercu(flotteAleatoire())}>Mélanger</button>}
+        </div>
+      )}
+      {jeu.etat === "en_cours" && monMarque && monEngagement && jeu.phase === "placement" && <p className="note">Empreinte publiée : <code title={monEngagement}>{monEngagement.slice(0, 10)}…</code> (ta flotte, elle, reste ici)</p>}
+    </CadreJeu>
+  );
+}
+
 /* Carte de chaque jeu, par identifiant (le « j » des événements). Un jeu qu'une version plus récente connaîtrait et pas celle-ci
    s'affiche comme « non pris en charge » au lieu de casser la page. */
-const CARTES = { morpion: CarteMorpion, pfc: CartePfc };
+const CARTES = { morpion: CarteMorpion, pfc: CartePfc, p4: CartePuissance4, bn: CarteBatailleNavale };
 
 export function CartePartie({ j, jeu, ...props }) {
   const Carte = Object.hasOwn(CARTES, j) ? CARTES[j] : null;

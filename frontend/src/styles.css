@@ -720,3 +720,27 @@ mark.mention { background: transparent; color: var(--accent); font-weight: 600; 
 .badge.mention-toi { border-color: var(--accent); color: var(--accent); }
 .texte.verrou { font-style: italic; }
 .suggestions-mention { list-style: none; margin: 0 0 4px; padding: 4px; display: flex; flex-wrap: wrap; gap: 4px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+
+/* Puissance 4 et bataille navale */
+.p4 { display: flex; flex-direction: column; gap: var(--s2); align-items: flex-start; }
+.p4-plateau { display: inline-flex; gap: 4px; padding: 8px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 18%, var(--paper)); border: 1px solid var(--bord-champ); }
+.p4-colonne { display: flex; flex-direction: column; gap: 4px; padding: 0; border: 0; border-radius: 20px; background: transparent; cursor: pointer; }
+.p4-colonne:hover:not(:disabled), .p4-colonne:focus-visible { background: color-mix(in srgb, var(--accent) 25%, transparent); outline: none; }
+.p4-colonne:disabled { cursor: default; }
+.p4-disque { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--surface); border: 1px solid var(--bord-champ); font-size: 1.1rem; line-height: 1; font-weight: 700; }
+.p4-disque.x { background: #C6613F; border-color: #8E3F24; color: #fff; }
+.p4-disque.o { background: #E5B93C; border-color: #A5801C; color: #3b2f0a; }
+.p4-disque.dernier { box-shadow: 0 0 0 2px var(--ink); }
+.p4-disque.gagnant { box-shadow: 0 0 0 3px var(--ok); }
+.bn { display: flex; flex-direction: column; gap: var(--s2); align-items: flex-start; width: 100%; }
+.bn-grilles { display: flex; flex-wrap: wrap; gap: var(--s3); }
+.bn-bloc .note { margin: 0 0 4px; }
+.grille-bn { display: grid; grid-template-columns: repeat(8, 28px); gap: 2px; }
+.case-bn { width: 28px; height: 28px; padding: 0; font-size: .9rem; line-height: 1; font-weight: 700; border: 1px solid var(--bord-champ); border-radius: 3px; background: color-mix(in srgb, #4A7FA5 14%, var(--surface)); color: var(--ink); cursor: pointer; }
+.case-bn:disabled { cursor: default; opacity: 1; }
+.case-bn:hover:not(:disabled) { border-color: var(--accent); background: var(--paper); }
+.case-bn.navire { background: #6B7B8C; border-color: #46525F; }
+.case-bn.touche { background: var(--accent); border-color: #8E3F24; color: #fff; }
+.case-bn.rate { color: var(--muted); }
+.case-bn.attente { background: var(--seal); }
+.case-bn.revelee { background: color-mix(in srgb, #6B7B8C 45%, var(--surface)); }

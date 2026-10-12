@@ -5,12 +5,15 @@
    Un jeu fournit :
      id, nom, icone                     identité (id = valeur du champ « j » des événements)
      libelleSalon, libellePrive, ...    textes des boutons de lancement
+     salon                              false : jeu réservé aux conversations privées (pas de bouton dans le salon ; voir JEUX_PRIVES dans backend/main.py)
      etatInitial()                      champs propres à la partie (grille, manche, points…)
      actions                            actions de jeu autres que défi / accepte / abandon (ex. ["coup"], ["engage", "revele", "forfait"])
      appliquer(g, ev)                   applique UNE de ces actions ; doit ignorer en silence tout ce qui est illégal
      ordrePrive(e)                      rang d'un événement dans une partie privée (pas de relais pour les numéroter)
      champsPrives(g, a)                 champs de transport en plus pour l'action a d'une partie privée (ex. numéro du coup)
    Règle d'or : appliquer() ne lève jamais d'erreur et ne fait confiance à rien (l'événement vient d'un autre joueur). */
+
+export const DELAI_FORFAIT = 60;  // secondes : au-delà, l'adversaire qui doit agir peut être déclaré forfait (salon seulement : l'heure vient du relais)
 
 const JEUX = Object.create(null);  // sans prototype : un identifiant comme « constructor » ne désigne jamais un jeu
 
@@ -23,6 +26,7 @@ export function enregistrerJeu(def) {
     libelleSalon: def.nom,
     libellePrive: def.nom,
     sousTitrePrive: "Partie privée à deux",
+    salon: true,
     champsPrives: () => ({}),
     ...def,
   };

@@ -11,7 +11,8 @@ function appliquerCoup(g, ev) {
   if (ev.s !== undefined && ev.s !== g.coups) return;  // parties privées : le coup doit porter le bon numéro (pas de numéro de relais pour les ordonner)
   const marque = g.tour;
   const joueur = marque === "x" ? g.x : g.o;
-  if (g.etat !== "en_cours" || !joueur || joueur.id !== ev.de || g.cases[ev.i]) return;
+  if (g.etat !== "en_cours" || !joueur || joueur.id !== ev.de) return;
+  if (!Number.isInteger(ev.i) || ev.i < 0 || ev.i >= 9 || g.cases[ev.i]) return;
   g.cases[ev.i] = marque;
   g.coups += 1;
   g.dernier = ev.i;

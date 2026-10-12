@@ -1,10 +1,11 @@
 import { verifierEngagement } from "../engagement.js";
-import { adversaire, enregistrerJeu, joueurDe, terminer } from "./cadre.js";
+import { DELAI_FORFAIT, adversaire, enregistrerJeu, joueurDe, terminer } from "./cadre.js";
+
+export { DELAI_FORFAIT };
 
 export const COUPS_PFC = { p: { nom: "Pierre", icone: "✊", bat: "c" }, f: { nom: "Feuille", icone: "✋", bat: "p" }, c: { nom: "Ciseaux", icone: "✌️", bat: "f" } };
 export const MANCHES_GAGNANTES = 2;   // première à 2 manches (égalités rejouées)
 export const MANCHES_MAX = 10;
-export const DELAI_FORFAIT = 60;  // secondes : au-delà, l'adversaire qui n'a pas joué peut être déclaré forfait (salon seulement)
 
 /* Contexte de l'engagement d'un coup : partie, manche, côté. Le côté lie l'empreinte à son auteur : l'empreinte d'Alice republiée par Bob
    ne se révèle pas comme la sienne (sinon il rejouerait son coup et son sel pour faire « nul » à chaque fois). */

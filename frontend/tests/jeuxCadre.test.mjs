@@ -64,11 +64,16 @@ t("engagement : coffre des secrets (clé historique, validation, stockage cassé
 // ------------------------------------------------------------------ registre
 t("registre : morpion et pfc sont inscrits avec toutes leurs fonctions", () => {
   const ids = listeJeux().map((j) => j.id);
-  assert.ok(ids.includes("morpion") && ids.includes("pfc"));
+  for (const id of ["morpion", "pfc", "p4", "bn"]) assert.ok(ids.includes(id), id);
   for (const j of listeJeux()) {
     for (const f of ["etatInitial", "appliquer", "ordrePrive", "champsPrives"]) assert.equal(typeof j[f], "function", `${j.id}.${f}`);
     assert.ok(Array.isArray(j.actions) && j.nom && j.icone && j.libelleSalon && j.libellePrive && j.sousTitrePrive);
+    assert.equal(typeof j.salon, "boolean");
   }
+});
+t("registre : la bataille navale est réservée aux parties privées, les autres jeux sont aussi au salon", () => {
+  assert.equal(jeuDefini("bn").salon, false);
+  for (const id of ["morpion", "pfc", "p4"]) assert.equal(jeuDefini(id).salon, true);
 });
 t("registre : un identifiant qui n'est pas un jeu (prototype, nombre) ne désigne rien", () => {
   for (const id of ["constructor", "__proto__", "toString", "hasOwnProperty", "", "echecs", 42, null, undefined, {}, []]) assert.equal(jeuDefini(id), null, String(id));
